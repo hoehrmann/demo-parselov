@@ -98,7 +98,7 @@ function write_edges_in_graphviz_dot_format(g, edges) {
       offset,
       v,
       g.vertices[v].type || "",
-      g.vertices[v].label || v
+      g.vertices[v].text || v
     ));
   };
 
