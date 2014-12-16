@@ -305,7 +305,10 @@ bottom, in which case this code could run alongside building the
 list of edges. It is important to understand that a vertex in a set
 of edges corresponds to just a couple of instructions that are known
 independently of the input; they can easily be compiled to a series
-of machine instructions.
+of machine instructions. Also note that this is just a demonstration
+of what could be done after the pre-processing step using the static
+data files. It is not considered part of what is discussed at the
+beginning of this document.
 
 ```js
 function generate_json_formatted_parse_tree(g, edges) {
