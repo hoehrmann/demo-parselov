@@ -476,35 +476,35 @@ Running this code with the RFC 4627 data file and `{"a\ffe":[]}` as
 input, the result is the following JSON document:
 
 ```js
-  ["JSON-text", [
-    ["object", [
-      ["begin-object", [
-        ["ws", [], 0, 0],
-        ["ws", [], 1, 1]], 0, 1],
-      ["member", [
-        ["string", [
-          ["quotation-mark", [], 1, 2],
-          ["char", [
-            ["unescaped", [], 2, 3]], 2, 3],
-          ["char", [
-            ["escape", [], 3, 4]], 3, 5],
-          ["char", [
-            ["unescaped", [], 5, 6]], 5, 6],
-          ["char", [
-            ["unescaped", [], 6, 7]], 6, 7],
-          ["quotation-mark", [], 7, 8]], 1, 8],
-        ["name-separator", [
-          ["ws", [], 8, 8],
-          ["ws", [], 9, 9]], 8, 9],
-        ["value", [
-          ["array", [
-            ["begin-array", [
-              ["ws", [], 9, 9],
-              ["ws", [], 10, 10]], 9, 10],
-            ["end-array", [
-              ["ws", [], 10, 10],
-              ["ws", [], 11, 11]], 10, 11]], 9, 11]], 9, 11]], 1, 11],
-      ["end-object", [
-        ["ws", [], 11, 11],
-        ["ws", [], 12, 12]], 11, 12]], 0, 12]], 0, 12]
+["JSON-text", [
+  ["object", [
+    ["begin-object", [
+      ["ws", [], 0, 0],
+      ["ws", [], 1, 1]], 0, 1],
+    ["member", [
+      ["string", [
+        ["quotation-mark", [], 1, 2],
+        ["char", [
+          ["unescaped", [], 2, 3]], 2, 3],
+        ["char", [
+          ["escape", [], 3, 4]], 3, 5],
+        ["char", [
+          ["unescaped", [], 5, 6]], 5, 6],
+        ["char", [
+          ["unescaped", [], 6, 7]], 6, 7],
+        ["quotation-mark", [], 7, 8]], 1, 8],
+      ["name-separator", [
+        ["ws", [], 8, 8],
+        ["ws", [], 9, 9]], 8, 9],
+      ["value", [
+        ["array", [
+          ["begin-array", [
+            ["ws", [], 9, 9],
+            ["ws", [], 10, 10]], 9, 10],
+          ["end-array", [
+            ["ws", [], 10, 10],
+            ["ws", [], 11, 11]], 10, 11]], 9, 11]], 9, 11]], 1, 11],
+    ["end-object", [
+      ["ws", [], 11, 11],
+      ["ws", [], 12, 12]], 11, 12]], 0, 12]], 0, 12]
 ```
