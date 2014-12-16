@@ -508,3 +508,37 @@ input, the result is the following JSON document:
       ["ws", [], 11, 11],
       ["ws", [], 12, 12]], 11, 12]], 0, 12]], 0, 12]
 ```
+
+Using the RFC 3986 data file and the string `example://0.0.0.0:23#x`:
+
+```js
+["URI", [
+  ["scheme", [
+    ["ALPHA", [], 0, 1],
+    ["ALPHA", [], 1, 2],
+    ["ALPHA", [], 2, 3],
+    ["ALPHA", [], 3, 4],
+    ["ALPHA", [], 4, 5],
+    ["ALPHA", [], 5, 6],
+    ["ALPHA", [], 6, 7]], 0, 7],
+  ["hier-part", [
+    ["authority", [
+      ["host", [
+        ["IPv4address", [
+          ["dec-octet", [
+            ["DIGIT", [], 10, 11]], 10, 11],
+          ["dec-octet", [
+            ["DIGIT", [], 12, 13]], 12, 13],
+          ["dec-octet", [
+            ["DIGIT", [], 14, 15]], 14, 15],
+          ["dec-octet", [
+            ["DIGIT", [], 16, 17]], 16, 17]], 10, 17]], 10, 17],
+      ["port", [
+        ["DIGIT", [], 18, 19],
+        ["DIGIT", [], 19, 20]], 18, 20]], 10, 20],
+    ["path-abempty", [], 20, 20]], 8, 20],
+  ["fragment", [
+    ["pchar", [
+      ["unreserved", [
+        ["ALPHA", [], 21, 22]], 21, 22]], 21, 22]], 21, 22]], 0, 22]
+```
