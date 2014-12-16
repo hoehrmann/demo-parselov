@@ -19,7 +19,7 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   // tables, input symbol are mapped into a smaller set of symbols.
   ///////////////////////////////////////////////////////////////////
   var s = [].map.call(input, function(ch) {
-    return g.input_to_symbol[ ch.charCodeAt(0) ]
+    return g.input_to_symbol[ ch.charCodeAt(0) ] || 0
   });
 
   ///////////////////////////////////////////////////////////////////
@@ -41,7 +41,7 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   // accepting state even though the input does not match it.
   ///////////////////////////////////////////////////////////////////
   if (!g.states[fstate].is_accepting) {
-    process.stderr.write("failed at " + forwards.indexOf(0));
+    process.stderr.write("failed around " + forwards.indexOf('0'));
     return;
   }
 
