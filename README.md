@@ -473,7 +473,14 @@ function generate_json_formatted_parse_tree(g, edges) {
 ```
 
 Running this code with the RFC 4627 data file and `{"a\ffe":[]}` as
-input, the result is the following JSON document:
+input, the result is the following JSON document. You can run this
+yourself using the `-json` switch, something along the lines of:
+
+```
+% git ...
+% cd ...
+% node demo-parselov.js example.json.gz example.data -json
+```
 
 ```js
 ["JSON-text", [
@@ -509,7 +516,7 @@ input, the result is the following JSON document:
       ["ws", [], 12, 12]], 11, 12]], 0, 12]], 0, 12]
 ```
 
-Using the RFC 3986 data file and the string `example://0.0.0.0:23#x`:
+Using the RFC 3986 data file and the string `example://0.0.0.0:23#x` gives:
 
 ```js
 ["URI", [
