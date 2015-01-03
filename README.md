@@ -573,7 +573,7 @@ Using the XML 1.0 4th Edition data file and
 
 gives
 
-```
+```js
 ["document", [
   ["prolog", [
     ["doctypedecl", [
