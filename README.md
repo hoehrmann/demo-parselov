@@ -67,6 +67,8 @@ var fs = require('fs');
 var zlib = require('zlib');
 var util = require('util');
 
+var as_json = process.argv[4] == "-json";
+
 var input = fs.readFileSync(process.argv[3], {
   "encoding": "utf-8"
 });
@@ -82,7 +84,7 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   // tables, input symbol are mapped into a smaller set of symbols.
   ///////////////////////////////////////////////////////////////////
   var s = [].map.call(input, function(ch) {
-    return g.input_to_symbol[ ch.charCodeAt(0) ]
+    return g.input_to_symbol[ ch.charCodeAt(0) ] || 0
   });
 
   ///////////////////////////////////////////////////////////////////
@@ -92,7 +94,7 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   ///////////////////////////////////////////////////////////////////
   var fstate = 1;
   var forwards = [fstate].concat(s.map(function(i) {
-    return fstate = g.states[fstate].transitions[i];
+    return fstate = g.forwards[fstate].transitions[i] || 0;
   }));
   
   ///////////////////////////////////////////////////////////////////
@@ -103,40 +105,24 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   // arily hold. For recursive grammars the automaton might be in an
   // accepting state even though the input does not match it.
   ///////////////////////////////////////////////////////////////////
-  if (!g.states[fstate].is_accepting) {
-    // ...
+  if (g.forwards[fstate].accepts == "0") {
+    process.stderr.write("failed around " + forwards.indexOf('0'));
+    return;
   }
 
   ///////////////////////////////////////////////////////////////////
-  // The mapped input symbols are then fed to another determinisitic
-  // finite automaton that parses the string again in reverse order,
-  // The data stores for each accepting state a suitable start state.
+  // The output of the first deterministic finite state transducer is
+  // then passed through a second one. At the end of the string it
+  // knows exactly which paths through the graph have led to a match
+  // and can now trace them back to eliminate matches that failed.
+  // The output of the second deterministic finite state transducer
+  // is a concatenation of edges to be added to the parse graph. As
+  // before, it starts in state `1` by convention.
   ///////////////////////////////////////////////////////////////////
-  var bstate = g.states[fstate].backward_start;
-  var backwards = s.reverse().map(function(i) {
-    return bstate = g.states[bstate].transitions[i];
-  });
-
-  ///////////////////////////////////////////////////////////////////
-  // The states of the automata correspond to graph vertices, and
-  // taking the states from the forward and backward parses together,
-  // the intersections of these sets can be computed for later use.
-  ///////////////////////////////////////////////////////////////////
-  var intersections = backwards.reverse().map(function(bck, ix) {
-    return g.states[ forwards[ix] ].intersections[bck] || 0;
-  });
-
-  ///////////////////////////////////////////////////////////////////
-  // Since computing the intersections takes into account parse data
-  // from both ends of the input, an intersection together with the
-  // corresponding input symbol is sufficient to identify the paths
-  // taken through the graph at the input symbol's position. The
-  // result is a set of edges which are computed in this last step.
-  ///////////////////////////////////////////////////////////////////
-  s.reverse();
-  var edges = intersections.map(function(ins, ix) {
-    return g.intersections[ins][ s[ix] ];
-  }).concat([ g.states[fstate].terminal_edges ]);
+  var bstate = 1;
+  var edges = forwards.reverse().map(function(i) {
+    return bstate = g.backwards[bstate].transitions[i] || 0;
+  }).reverse();
 
   ///////////////////////////////////////////////////////////////////
   // The `edges` list is just a list of integers, each identifying a
@@ -358,7 +344,9 @@ function generate_json_formatted_parse_tree(g, edges) {
       // on the path that is currently being explored, the vertex can
       // be compared to the stack's top element, and if they match,
       // we can move on to a successor vertex. On the other hand, if
-      // the stack is empty, the code has taken a wrong turn.
+      // the stack is empty, the code has taken a wrong turn. It may
+      // be better to catch this condition using a sentinel value on
+      // the stack; vertex `0` is reserved for such uses.
       ///////////////////////////////////////////////////////////////
       if (p.stack.length == 0) {
         parsers.shift();
@@ -379,6 +367,31 @@ function generate_json_formatted_parse_tree(g, edges) {
       }
 
       p.output += '], ' + top.offset + ', ' + p.offset + '],';
+    }
+    
+    /////////////////////////////////////////////////////////////////
+    // Actually, `start` and `final` vertices do not mark entrance
+    // and exit points of recursions, rather they are re-used if more
+    // than one such pair of points exists. They are distinguished by
+    // guarding pairs of `prefix` and `suffix` nodes. They actually
+    // need to be mapped to stack operations; it is optional but very
+    // convenient for the `start` and `final` vertices.
+    /////////////////////////////////////////////////////////////////
+    if (g.vertices[p.vertex].type == "prefix") {
+      p.stack.push({"vertex": p.vertex, "offset": p.offset});
+    }
+
+    if (g.vertices[p.vertex].type == "suffix") {
+      if (p.stack.length == 0) {
+        parsers.shift();
+        continue;
+      }
+      
+      var top = p.stack.pop();
+      if (p.vertex != g.vertices[top.vertex]["with"]) {
+        parsers.shift();
+        continue;
+      }
     }
     
     /////////////////////////////////////////////////////////////////
@@ -443,7 +456,7 @@ function generate_json_formatted_parse_tree(g, edges) {
     // the first position. The current parser will continue with it.
     /////////////////////////////////////////////////////////////////
     var chosen = successors.shift();
-
+    
     /////////////////////////////////////////////////////////////////
     // All other successors, if there are any, are turned into start
     // positions for additional parsers, that may be used instead of
@@ -548,4 +561,86 @@ Using the RFC 3986 data file and the string `example://0.0.0.0:23#x` gives:
     ["pchar", [
       ["unreserved", [
         ["ALPHA", [], 21, 22]], 21, 22]], 21, 22]], 21, 22]], 0, 22]
+```
+
+Using the XML 1.0 4th Edition data file and
+
+```xml
+<!DOCTYPE x [<!ENTITY z "">]>
+<x><y>&z;</y></x>
+
+```
+
+gives
+
+```
+["document", [
+  ["prolog", [
+    ["doctypedecl", [
+      ["S", [], 9, 10],
+      ["Name", [
+        ["Letter", [
+          ["BaseChar", [], 10, 11]], 10, 11]], 10, 11],
+      ["S", [], 11, 12],
+      ["intSubset", [
+        ["markupdecl", [
+          ["EntityDecl", [
+            ["GEDecl", [
+              ["S", [], 21, 22],
+              ["Name", [
+                ["Letter", [
+                  ["BaseChar", [], 22, 23]], 22, 23]], 22, 23],
+              ["S", [], 23, 24],
+              ["EntityDef", [
+                ["EntityValue", [], 24, 26]], 24, 26]], 13, 27]],
+                  13, 27]], 13, 27]], 13, 27]], 0, 29],
+    ["Misc", [
+      ["S", [], 29, 30]], 29, 30],
+    ["Misc", [
+      ["S", [], 30, 31]], 30, 31]], 0, 31],
+  ["element", [
+    ["STag", [
+      ["Name", [
+        ["Letter", [
+          ["BaseChar", [], 32, 33]], 32, 33]], 32, 33]], 31, 34],
+      ["content", [
+          ["element", [
+            ["STag", [
+              ["Name", [
+                ["Letter", [
+                  ["BaseChar", [], 35, 36]], 35, 36]], 35, 36]],
+                    34, 37],
+              ["content", [
+                ["Reference", [
+                  ["EntityRef", [
+                    ["Name", [
+                      ["Letter", [
+                        ["BaseChar", [], 38, 39]], 38, 39]], 38,
+                          39]], 37, 40]], 37, 40]], 37, 40],
+            ["ETag", [
+              ["Name", [
+                ["Letter", [
+                  ["BaseChar", [], 42, 43]], 42, 43]], 42, 43]],
+                    40, 44]], 34, 44]], 34, 44],
+    ["ETag", [
+      ["Name", [
+        ["Letter", [
+          ["BaseChar", [], 46, 47]], 46, 47]], 46, 47]], 44, 48]],
+            31, 48],
+  ["Misc", [
+    ["S", [], 48, 49]], 48, 49],
+  ["Misc", [
+    ["S", [], 49, 50]], 49, 50]], 0, 50]  
+```
+
+You can also verify that the parse fails for ill-formed input like
+
+```xml
+<x><?xml?></x>
+```
+
+using the sample files included in the repository like so
+
+```
+% node demo-parselov.js xml4e.document.json.gz bad.xml
 ```

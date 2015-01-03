@@ -1,0 +1,2 @@
+<!DOCTYPE x [<!ENTITY z "">]>
+<x><y>&z;</y></x>

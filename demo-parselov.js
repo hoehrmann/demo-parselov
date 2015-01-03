@@ -29,7 +29,7 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   ///////////////////////////////////////////////////////////////////
   var fstate = 1;
   var forwards = [fstate].concat(s.map(function(i) {
-    return fstate = g.states[fstate].transitions[i];
+    return fstate = g.forwards[fstate].transitions[i] || 0;
   }));
   
   ///////////////////////////////////////////////////////////////////
@@ -40,41 +40,24 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   // arily hold. For recursive grammars the automaton might be in an
   // accepting state even though the input does not match it.
   ///////////////////////////////////////////////////////////////////
-  if (!g.states[fstate].is_accepting) {
+  if (g.forwards[fstate].accepts == "0") {
     process.stderr.write("failed around " + forwards.indexOf('0'));
     return;
   }
 
   ///////////////////////////////////////////////////////////////////
-  // The mapped input symbols are then fed to another determinisitic
-  // finite automaton that parses the string again in reverse order,
-  // The data stores for each accepting state a suitable start state.
+  // The output of the first deterministic finite state transducer is
+  // then passed through a second one. At the end of the string it
+  // knows exactly which paths through the graph have led to a match
+  // and can now trace them back to eliminate matches that failed.
+  // The output of the second deterministic finite state transducer
+  // is a concatenation of edges to be added to the parse graph. As
+  // before, it starts in state `1` by convention.
   ///////////////////////////////////////////////////////////////////
-  var bstate = g.states[fstate].backward_start;
-  var backwards = s.reverse().map(function(i) {
-    return bstate = g.states[bstate].transitions[i];
-  });
-
-  ///////////////////////////////////////////////////////////////////
-  // The states of the automata correspond to graph vertices, and
-  // taking the states from the forward and backward parses together,
-  // the intersections of these sets can be computed for later use.
-  ///////////////////////////////////////////////////////////////////
-  var intersections = backwards.reverse().map(function(bck, ix) {
-    return g.states[ forwards[ix] ].intersections[bck] || 0;
-  });
-
-  ///////////////////////////////////////////////////////////////////
-  // Since computing the intersections takes into account parse data
-  // from both ends of the input, an intersection together with the
-  // corresponding input symbol is sufficient to identify the paths
-  // taken through the graph at the input symbol's position. The
-  // result is a set of edges which are computed in this last step.
-  ///////////////////////////////////////////////////////////////////
-  s.reverse();
-  var edges = intersections.map(function(ins, ix) {
-    return g.intersections[ins][ s[ix] ];
-  }).concat([ g.states[fstate].terminal_edges ]);
+  var bstate = 1;
+  var edges = forwards.reverse().map(function(i) {
+    return bstate = g.backwards[bstate].transitions[i] || 0;
+  }).reverse();
 
   if (as_json) {
     var tree = generate_json_formatted_parse_tree(g, edges);
@@ -199,7 +182,9 @@ function generate_json_formatted_parse_tree(g, edges) {
       // on the path that is currently being explored, the vertex can
       // be compared to the stack's top element, and if they match,
       // we can move on to a successor vertex. On the other hand, if
-      // the stack is empty, the code has taken a wrong turn.
+      // the stack is empty, the code has taken a wrong turn. It may
+      // be better to catch this condition using a sentinel value on
+      // the stack; vertex `0` is reserved for such uses.
       ///////////////////////////////////////////////////////////////
       if (p.stack.length == 0) {
         parsers.shift();
@@ -220,6 +205,31 @@ function generate_json_formatted_parse_tree(g, edges) {
       }
 
       p.output += '], ' + top.offset + ', ' + p.offset + '],';
+    }
+    
+    /////////////////////////////////////////////////////////////////
+    // Actually, `start` and `final` vertices do not mark entrance
+    // and exit points of recursions, rather they are re-used if more
+    // than one such pair of points exists. They are distinguished by
+    // guarding pairs of `prefix` and `suffix` nodes. They actually
+    // need to be mapped to stack operations; it is optional but very
+    // convenient for the `start` and `final` vertices.
+    /////////////////////////////////////////////////////////////////
+    if (g.vertices[p.vertex].type == "prefix") {
+      p.stack.push({"vertex": p.vertex, "offset": p.offset});
+    }
+
+    if (g.vertices[p.vertex].type == "suffix") {
+      if (p.stack.length == 0) {
+        parsers.shift();
+        continue;
+      }
+      
+      var top = p.stack.pop();
+      if (p.vertex != g.vertices[top.vertex]["with"]) {
+        parsers.shift();
+        continue;
+      }
     }
     
     /////////////////////////////////////////////////////////////////
@@ -284,7 +294,7 @@ function generate_json_formatted_parse_tree(g, edges) {
     // the first position. The current parser will continue with it.
     /////////////////////////////////////////////////////////////////
     var chosen = successors.shift();
-
+    
     /////////////////////////////////////////////////////////////////
     // All other successors, if there are any, are turned into start
     // positions for additional parsers, that may be used instead of
@@ -310,4 +320,5 @@ function generate_json_formatted_parse_tree(g, edges) {
 
     p.vertex = chosen.successor;
   }
+  return "bad";
 }
