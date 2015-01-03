@@ -133,7 +133,11 @@ zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
   ///////////////////////////////////////////////////////////////////
   write_edges_in_graphviz_dot_format(g, edges);
 });
+```
 
+The code to turn lists of edge set identifiers into a GraphViz file:
+
+```js
 function write_edges_in_graphviz_dot_format(g, edges) {
 
   ///////////////////////////////////////////////////////////////////
