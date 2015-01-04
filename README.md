@@ -648,3 +648,51 @@ using the sample files included in the repository like so
 ```
 % node demo-parselov.js xml4e.document.json.gz bad.xml
 ```
+
+## Limitations
+
+The basic approach outlined above works well for carefully constructed
+data format and protocol message formats that are relatively regular,
+unambiguous, and deterministic, which is the case for a large set of
+standard formats. The samples include parsing data for URIs, JSON,
+XML, and ABNF. All the corresponding grammars are ambiguous and only
+URIs are regular, so these are not strict requirements.
+
+The design of the data files also allows the deterministic finite
+state transducers used for pre-processing the input to simply record
+the input without making decisions on their own, in which case the
+higher level parser would turn into an unaided non-deterministic
+pushdown transducer. That is a worst-case escape hatch that ensures
+the integrity of the parsing data files while avoiding the creation
+of an exponential number of states, so **it is always possible to create
+a correct and reasonably sized data file**, but naively written higher
+level parsers are likely to perform poorly within this system.
+
+There are ways to delay the inevitable however. A simple example are
+XML document type definition files. The finite state transducers can
+handle the format fine except for one construct:
+
+```
+ignoreSect         ::= '<![' S? 'IGNORE' S? '[' ignoreSectContents* ']]>'
+ignoreSectContents ::= Ignore ('<![' ignoreSectContents ']]>' Ignore)*
+Ignore             ::= Char* - (Char* ('<![' | ']]>') Char*) 
+```
+
+In the grammar for XML, `Char` is the whole alphabet, and the rule
+`ignoreSectContents` matches anything so long as any `<![` properly
+nests with a closing `]]>`. Since the finite transducers cannot
+detect the outermost closing `]]>`, this simply matches anything; in
+order to still make all regular decisions for the higher level parser,
+an inordinate amount of states is needed. Of course, for any finite
+number of nesting levels, relatively few states are needed, delaying
+any fallback to the worst case as much as is convenient by expanding
+problematic recursions a couple of times.
+
+It would also be possible to extend the basic formalism along the
+hiearchy of languages with additional features so such cases can be
+handled by lower level parsers. For the particular example above, a
+counter and transitions depending on whether the counter is zero is
+needed. With a stack and transitions depending on the top symbol, we
+would have classic deterministic pushdown transducers. Similarily,
+there could be a finite number of stacks in parallel used in this
+manner. Beyond that there is probably no point in further extensions.
