@@ -688,6 +688,70 @@ number of nesting levels, relatively few states are needed, delaying
 any fallback to the worst case as much as is convenient by expanding
 problematic recursions a couple of times.
 
+An example of this is included in the repository. Using
+
+```
+% node demo-parselov.js xml4e.extSubset.json.gz ex.dtd
+```
+
+Right after reading the first `<![IGNORE[` in a location where the
+construct is allowed, the first finite state transducer switches to
+a worst-case mode of operation and simply records the input. The
+second transducer accordingly generates all possible edges for every
+position in the input, leaving an inordinate amount of work for the
+naively written higher level demo parser introduced earlier. The
+`dot` output is nevertheless correct. For an input like
+
+```xml
+<!ELEMENT a (b, (c | d)*, e*)>
+```
+
+The output would be
+
+```js
+["extSubset", [
+  ["extSubsetDecl", [
+    ["markupdecl", [
+      ["elementdecl", [
+        ["S", [], 9, 10],
+        ["Name", [
+          ["Letter", [
+            ["BaseChar", [], 10, 11]], 10, 11]], 10, 11],
+        ["S", [], 11, 12],
+        ["contentspec", [
+          ["children", [
+            ["seq", [
+                ["cp", [
+                  ["Name", [
+                    ["Letter", [
+                      ["BaseChar", [], 13, 14]], 13, 14]], 13, 14]],
+                        13, 14],
+              ["S", [], 15, 16],
+                ["cp", [
+                    ["choice", [
+                        ["cp", [
+                          ["Name", [
+                            ["Letter", [
+                              ["BaseChar", [], 17, 18]], 17, 18]],
+                                17, 18]], 17, 18],
+                      ["S", [], 18, 19],
+                      ["S", [], 20, 21],
+                        ["cp", [
+                          ["Name", [
+                            ["Letter", [
+                              ["BaseChar", [], 21, 22]], 21, 22]],
+                                21, 22]], 21, 22]], 16, 23]], 16, 24],
+              ["S", [], 25, 26],
+                ["cp", [
+                  ["Name", [
+                    ["Letter", [
+                      ["BaseChar", [], 26, 27]], 26, 27]], 26, 27]],
+                        26, 28]], 12, 29]], 12, 29]], 12, 29]], 0,
+                          30]], 0, 30],
+    ["DeclSep", [
+      ["S", [], 30, 31]], 30, 31]], 0, 31]], 0, 31]  
+```
+
 It would also be possible to extend the basic formalism along the
 hiearchy of languages with additional features so such cases can be
 handled by lower level parsers. For the particular example above, a

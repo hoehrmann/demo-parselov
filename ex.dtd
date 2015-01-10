@@ -1,0 +1,1 @@
+<!ELEMENT a (b, (c | d)*, e*)>
