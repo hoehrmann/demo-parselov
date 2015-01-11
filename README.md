@@ -413,6 +413,11 @@ function generate_json_formatted_parse_tree(g, edges) {
           return p.output.replace(/,\]/g, ']').replace(/,$/, '');
     }
     
+    if (p.offset >= edges.length) {
+      parsers.shift();
+      continue;
+    }
+
     /////////////////////////////////////////////////////////////////
     // Without a match and without a parsing failure, the path under
     // consideration can be explored further. For that the successors
@@ -760,3 +765,105 @@ needed. With a stack and transitions depending on the top symbol, we
 would have classic deterministic pushdown transducers. Similarily,
 there could be a finite number of stacks in parallel used in this
 manner. Beyond that there is probably no point in further extensions.
+
+## Sample applications
+
+### Prefixing rules in ABNF grammars
+
+The Internet Standards body IETF primarily uses the ABNF format to
+define the syntax of data formats and protocol messages. ABNF lacks
+features to import symbols from different grammars and does not
+support namespace mechanisms which can make it difficult to create
+grammars that properly define all symbols in order to use them with
+existing ABNF tools. For instance, different specifications might
+use the same non-terminal name for different things, so grammars
+cannot simply be concatenated.
+
+A simple mitigation would be to add prefixes to imported rulenames.
+In order to do that reliably and automatically, an ABNF parser is
+required. Ideally, for this simple transformation, a tool would do
+nothing but add prefixes to rulenames, but in practise tools are
+likely to make additional changes, like normalising or removing
+formatting, stripping comments, possibly normalise the case of
+rulenames, change their order, or normalising the format of various
+non-termials. They might also be unable to process some grammars
+e.g. due to semantic or higher-level syntactic problems like rules
+that are referenced but not defined or only defined using the prose
+rule construct.
+
+With the tools introduced above it is easy to make a tool that just
+renames rulenames without making any other change and without any
+requirements beyond the basic well-formedness of the input grammar.
+
+```js
+var fs = require('fs');
+var util = require('util');
+
+var data = fs.readFileSync(process.argv[2], {
+  "encoding": "utf-8"
+});
+var root = JSON.parse(fs.readFileSync(process.argv[3]));
+var prefix = process.argv[4];
+
+var todo = [root];
+var indices = [];
+
+/////////////////////////////////////////////////////////////////////
+// Taking the output of `generate_json_formatted_parse_tree` the JSON
+// formatted parse tree is traversed to find the start positions of
+// all `rulename`s that appear in a given input ABNF grammar file.
+/////////////////////////////////////////////////////////////////////
+while (todo.length > 0) {
+  var current = todo.shift();
+  todo = current[1].concat(todo);
+  if (current[0] == "rulename")
+    indices.push(current[2]);
+}
+
+/////////////////////////////////////////////////////////////////////
+// The input is then copied, adding the desired prefix as needed.
+/////////////////////////////////////////////////////////////////////
+var result = "";
+if (indices.length) {
+  var rest = data.substr(indices[indices.length - 1]);
+  for (var ix = 0; indices.length;) {
+    var current = indices.shift();
+    result += data.substr(ix, current - ix);
+    result += prefix;
+    ix = current;
+  }
+  result += rest;
+} else {
+  result = data;
+}
+
+process.stdout.write(result);
+```
+
+Usage:
+
+```
+% node demo-parselov.js rfc5234.rulelist.json.gz ex.abnf -json > tmp
+% node add-prefix.js ex.abnf tmp ex > prefixed.abnf
+```
+
+Input:
+
+```
+rulelist       =  1*( rule / (*c-wsp c-nl) )
+...
+```
+
+Output:
+
+```
+ex-rulelist       =  1*( ex-rule / (*ex-c-wsp ex-c-nl) )
+...
+```
+
+The process is fully reversible by parsing the output and removing
+the prefix from all `rulename`s, assuming an appropriate prefix.
+That makes it easy, for instance, to later prove that the modified
+grammar is identical to the original, which can be much harder if
+other changes are made.
+

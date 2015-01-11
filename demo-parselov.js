@@ -247,6 +247,11 @@ function generate_json_formatted_parse_tree(g, edges) {
           return p.output.replace(/,\]/g, ']').replace(/,$/, '');
     }
     
+    if (p.offset >= edges.length) {
+      parsers.shift();
+      continue;
+    }
+
     /////////////////////////////////////////////////////////////////
     // Without a match and without a parsing failure, the path under
     // consideration can be explored further. For that the successors
