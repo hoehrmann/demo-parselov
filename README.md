@@ -766,9 +766,66 @@ would have classic deterministic pushdown transducers. Similarily,
 there could be a finite number of stacks in parallel used in this
 manner. Beyond that there is probably no point in further extensions.
 
+## Combination of data files and parallel simulation
+
+The design of the core system makes it easy to simulate multiple
+automata in parallel, and since all state is trivially accessible,
+new data files that easily be created as combinations of existing
+ones. The most common combinations are directly supported as part
+of the core data file generation process, such as the union of two
+alternatives, and set subtraction. The latter is used e.g. by the
+EBNF grammar for XML 1.0 to express rules such as `any Name except
+'xml'` which are often difficult to express with other systems.
+Likewise, the intersection of two grammars is easily computed.
+
+An important implication is that the system can be used to compare
+grammars. As an example, the sample files include one for URIs as
+defined by RFC 3986. The precursor of RFC 3986 is RFC 2396, and it
+can be useful to construct a data file for strings that are URIs
+under one definition but not the other, e.g. to derive test cases,
+or if the two definitions were meant to be the same, to verify that
+they are (as in set theory, if `A - B` is empty and `B - A` is empty
+then `A` and `B` are equivalent).
+
+The way to combine data files is exhaustive simulation. As example,
+the forwards automaton in any data file starts in state `1`. If you
+have two data iles, you can make a pair of states `(1, 1)` and a
+character `ch`, and compute
+
+```js
+  var s1 = g1.forwards[1].transitions[ g1.input_to_symbol[ch] ];
+  var s2 = g2.forwards[1].transitions[ g2.input_to_symbol[ch] ];
+```
+
+which would give a transition from `(1, 1)` over `ch` to `(s1, s2)`.
+The pairs are the states in the new automaton. When computing a union
+a state in the new automaton is accepting if either of the states it
+represents is accepting. For intersection both states have to be
+accepting. For `A - B` the state in A has to be accepting, but the
+state for B must not be. For boolean combinations the structure of
+the automaton is always the same, except that some states may end up
+being redundant.
+
+For the `backwards` automaton the process is the same. Merging the
+corresponding graph data is done by taking the union of edges. It
+is of course necessary to rename vertices to avoid collisions. It
+is also useful to first create a common `input_to_symbol` table and
+then simulate over character classes instead of indiviual characters.
+
+There are many other interesting combinations than the simple boolean
+ones. For instance, instead of of indiscriminate union it can also be
+useful to create an ordered choice `if A then A else B`. This would
+disambiguate between A and B. Typical applications include support
+for legacy constructs in grammars or other fallback rules. This can
+be implemented just like the union, but when creating the backwards
+automaton, the unwanted edges would be left out.
+
+It is also possible to create interleavings (switching from one
+automaton to another) and other constructs with similar effort.
+
 ## Sample applications
 
-### Prefixing rules in ABNF grammars
+### Prefixing rulenames in ABNF grammars
 
 The Internet Standards body IETF primarily uses the ABNF format to
 define the syntax of data formats and protocol messages. ABNF lacks
@@ -844,7 +901,7 @@ Usage:
 
 ```
 % node demo-parselov.js rfc5234.rulelist.json.gz ex.abnf -json > tmp
-% node add-prefix.js ex.abnf tmp ex > prefixed.abnf
+% node add-prefix.js ex.abnf tmp "ex" > prefixed.abnf
 ```
 
 Input:
@@ -865,5 +922,54 @@ The process is fully reversible by parsing the output and removing
 the prefix from all `rulename`s, assuming an appropriate prefix.
 That makes it easy, for instance, to later prove that the modified
 grammar is identical to the original, which can be much harder if
-other changes are made.
+other changes are made. Furthermore, the code is not subject to any
+limitations that might be imposed by a hand-written ABNF parser. If
+some rules are left undefined, or if they are defined using prose
+rule constructs that are not generally machine-readable and thus
+unsuitable for many applications, or whatever else, so long as the
+input actually matches the ABNF meta-grammar, the tool works as
+advertised.
 
+There are many situations where similar applications can be useful.
+For instance, sometimes it may be necessary to inject document type
+declarations or entity definitions into XML fragments when turning
+a legacy XML database into a new format because the legacy system
+omitted them and the employed XML toolkit does not support such a
+feature natively. Instead of fiddling with such fragments using
+regular expressions, which may produce incorrect results in some
+unusual situations (like a document type declaration that has been
+commented out), an approach as outlined above would ensure correct
+results.
+
+Another simple example are "minification" applications that remove
+redundant parts of documents to reduce their transfer size, like
+removing formatting white space from JSON documents. For that use
+case, the data file for JSON can be used. The code would look for
+`ws` portions in a JSON document and omit corresponding characters
+when producing the output. For the specific case of JSON this may
+be uninteresting nowadays because many implementations that can do
+this exist, the point is that they are easy to write when proper
+parsing is taken care of, as this system does.
+
+A more complex example are variations and extensions of data formats.
+To stick with the example of JSON, since JSON originates with the
+JavaScript programming language, and as it lacks some features, it
+is fairly common to encounter web services that do not emit strictly
+compliant JSON, either for legacy reasons or due to delibate choices.
+For instance, comments might be included, or rather than using `null`
+they might encode undefined values using the empty string. Say,
+
+```js
+[1,2,,4] /* the third value is `undefined` */
+```
+
+Typical JSON parsers will be unable to process such data, but it is
+easy to remove the comment and inject a `null` value where it is
+missing. Then any JSON parser can be used to process the document. It
+is tempting to remove the comment and insert the `null` value using
+regular expression replacement facilities, but doing so manually is
+likely to produce incorrect results in some edge cases, like when
+something that looks like a comment is included in a quoted string.
+Instead, a data file for a more liberal JSON grammar could be made,
+and then the desired modifications could be applied as explained
+above.
