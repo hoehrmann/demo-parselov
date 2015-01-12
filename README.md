@@ -798,7 +798,7 @@ character `ch`, and compute
 ```
 
 which would give a transition from `(1, 1)` over `ch` to `(s1, s2)`.
-The pairs are the states in the new automaton. When computing a union
+The pairs are the states in the new automaton. When computing a union,
 a state in the new automaton is accepting if either of the states it
 represents is accepting. For intersection both states have to be
 accepting. For `A - B` the state in A has to be accepting, but the
