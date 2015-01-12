@@ -973,3 +973,107 @@ something that looks like a comment is included in a quoted string.
 Instead, a data file for a more liberal JSON grammar could be made,
 and then the desired modifications could be applied as explained
 above.
+
+### Analysing data format test suite completeness
+
+Since the main part of the parsing process is entirely transparent to
+higher-level code, it is easy to analyse which parts of the data files
+are actually used when running them over a large corpus of documents.
+For instance, the W3C provides a large set of XML documents as part of
+the [XML Test Suite](http://www.w3.org/XML/Test/). The following code
+takes all `.xml` files in a given directory, assumes that the files
+are UTF-8-encoded, and then runs their contents through the forwards
+automaton and records the number of times a given state has been
+reached in a histogram. Finally it relates the number of states that
+have never been reached to the total number of states which gives a
+simple coverage metric:
+
+```js
+var fs = require('fs');
+var zlib = require('zlib');
+var util = require('util');
+
+var seen = {};
+var todo = [ process.argv[3] ];
+var files = [];
+
+while (todo.length) {
+  var current = todo.pop();
+  if (seen[current])
+    continue;
+  seen[current] = true;
+  var stat = fs.statSync(current);
+  if (stat.isFile())
+    files.push(current);
+  if (!stat.isDirectory())
+    continue;
+  todo = todo.concat(fs.readdirSync(current).map(function(p) {
+    return current + "/" + p;
+  }));
+}
+
+var xml_files = files.filter(function(p) {
+  return p.match(/\.xml$/);
+});
+
+zlib.gunzip(fs.readFileSync(process.argv[2]), function(err, buf) {
+
+  var g = JSON.parse(buf);
+  var histogram = [];
+
+  g.forwards.forEach(function(e, ix) {
+    histogram[ix] = 0;
+  });
+
+  for (var ix in xml_files) {
+    var path = xml_files[ix];
+    var input = fs.readFileSync(path, {
+      "encoding": "utf-8"
+    });
+
+    var s = [].map.call(input, function(ch) {
+      return g.input_to_symbol[ ch.charCodeAt(0) ] || 0
+    });
+
+    var fstate = 1;
+    var forwards = [fstate].concat(s.map(function(i) {
+      return fstate = g.forwards[fstate].transitions[i] || 0;
+    }));
+    
+    forwards.forEach(function(e) {
+      histogram[e]++;
+    });
+  }
+  
+  var unused = [];
+  histogram.forEach(function(e, ix) {
+    if (e == 0)
+      unused.push(ix);
+  });
+  
+  process.stdout.write("Forward state coverage: "
+    + (1 - unused.length / histogram.length));
+});
+```
+
+Output for the `20130923` version:
+
+```
+% node xmlts.js xml4e.document.json.gz ./xmlconf
+Forward state coverage: 0.7478632478632479
+```
+
+This means almost `75%` of the states are covered by the `.xml` files
+in the sample. Note that the automaton has different states for cases
+like "hexadecimal character reference in attribute value" where the
+attribute value is in single quotes and where it is in double quotes.
+Humans are not likely to manually write test cases for each and every
+such variation, which should explain part of the gap in coverage.
+
+The application can effortlessly be extended to report coverage with
+respect to other parts of the data, such as which transitions have
+been used, and state and transition coverage for the backwards case.
+Edge and vertex coverage can also be interesting. Note that the tool
+is, except for the `.xml` filter, entirely generic and does not know 
+anything about XML.
+
