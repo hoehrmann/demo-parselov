@@ -901,7 +901,7 @@ Usage:
 
 ```
 % node demo-parselov.js rfc5234.rulelist.json.gz ex.abnf -json > tmp
-% node add-prefix.js ex.abnf tmp "ex" > prefixed.abnf
+% node add-prefix.js ex.abnf tmp "ex-" > prefixed.abnf
 ```
 
 Input:
@@ -1077,3 +1077,225 @@ Edge and vertex coverage can also be interesting. Note that the tool
 is, except for the `.xml` filter, entirely generic and does not know 
 anything about XML.
 
+### Generating random documents
+
+Generating random documents that match the grammar represented by the
+data files is fairly simple in principle. A proper document is simply
+a path through the graph (which in turn is just the combination of
+all the edges in a data file) that obeys a few constraints imposed by
+special vertices in the graph. For grammars that use only standard
+combinators like concatenation and union that is at most recursion
+nesting constraints. For simple regular grammars it would even suffice
+to find a path through the `forwards` automaton from the first to any
+accepting state. The following Perl script takes a data file and then
+prints 10 random examples assuming there is a valid string.
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use Graph::RandomPath;
+use IO::Uncompress::Gunzip qw/gunzip/;
+
+local $Storable::canonical = 1;
+
+my ($path) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+#####################################################################
+# Only the `forwards` transducer knows the character transitions, and
+# it is necessary to combine most of the tables in the data file to
+# put them back on the edges of the graph. This is somewhat involved,
+# and it might be a good idea to redundantly store this in the data.
+#####################################################################
+my %fwd;
+for (my $src = 1; $src < @{ $d->{forwards} }; ++$src) {
+  for my $via (keys %{ $d->{forwards}[$src]{transitions} }) {
+    my $dst = $d->{forwards}[$src]{transitions}{$via};
+    next unless $dst;
+    $fwd{$src}{$dst}{$via} = 1;
+  }
+}
+
+#####################################################################
+# Only the `backwards` automaton knows the vertices a `forward` state
+# corresponds to, so it is turned into a more accessible form aswell.
+#####################################################################
+my %bck;
+for (my $edg = 1; $edg < @{ $d->{backwards} }; ++$edg) {
+  next unless $d->{backwards}[$edg];
+  for my $dst (keys %{ $d->{backwards}[$edg]{transitions} }) {
+    my $edg2 = $d->{backwards}[$edg]{transitions}{$dst};
+    for my $src (keys %{ $d->{backwards}[$edg2]{transitions} }) {
+      my $edg3 = $d->{backwards}[$edg2]{transitions}{$src};
+      $bck{$dst}{$src}{$edg3} = 1;
+    }
+  }
+}
+
+#####################################################################
+# Finally it is possible to combine the `forwards` transitions over
+# input symbols with the unlabeled `char_edges` to label them.
+#####################################################################
+my %labels;
+for my $src (keys %fwd) {
+  for my $dst (keys %{ $fwd{$src} }) {
+    for my $edg (keys %{ $bck{$dst}{$src} }) {
+      for (my $ix = 0; $ix < @{ $d->{char_edges}[$edg] }; ++$ix) {
+        my $vsrc = $d->{char_edges}[$edg][$ix][0];
+        my $vdst = $d->{char_edges}[$edg][$ix][1];
+        for my $via (keys %{ $fwd{$src}{$dst} }) {
+          $labels{$vsrc}{$vdst}{$via} = 1;
+        }
+      }
+    }
+  }
+}
+
+#####################################################################
+# It is also necessary to turn input symbols (character classes) into
+# actual input characters, so here we recover all the ranges.
+#####################################################################
+my %classes;
+$classes{ $d->{input_to_symbol}[0] } = [[0,0]];
+for (my $ax = 1; $ax < @{ $d->{input_to_symbol} }; ++$ax) {
+  my $cs = $d->{input_to_symbol}[$ax];
+  my $ps = $d->{input_to_symbol}[$ax - 1];
+  if ($cs == $ps) {
+    $classes{$cs}[-1][1]++;
+  } else {
+    push @{ $classes{$cs} }, [$ax, $ax];
+  }
+}
+
+#####################################################################
+# A simple path might not respect proper nesting of recursions, that
+# has to be done separately to reject bad paths. It would be possible
+# to do that as part of the random path finding routine, of course.
+#####################################################################
+sub verify_path_stack {
+  my (@path) = @_;
+  my @stack;
+  for (my $ix = 0; $ix < @path; ++$ix) {
+    my $vd = $d->{vertices}[ $path[$ix] ];
+    next unless $vd->{type};
+    if ($vd->{type} eq 'prefix') {
+      push @stack, $vd->{with};
+    }
+    if ($vd->{type} eq 'suffix') {
+      return unless @stack;
+      my $top = pop @stack;
+      return unless $top eq $path[$ix];
+    }
+  }
+  return 0 == @stack;
+}
+
+#####################################################################
+# `verify_path_stack` would actually have to explore more paths than
+# the one passed to it to account for boolean combinators that may be
+# included in the graph other than simple choices. To work correctly
+# at least when regular operands are used, and the data file does not
+# include "worst case" states, the path is tested against the DFA.
+#####################################################################
+sub verify_path_dfa {
+  my (@vias) = @_;
+  my $fstate = 1;
+  my @forwards = ($fstate, map {
+    $fstate = $d->{forwards}[$fstate]{transitions}{$_} // 0
+  } @vias);
+  return $d->{forwards}[$fstate]{accepts};
+}
+
+#####################################################################
+# Recovering the graph is trivial, it's simply all edges combined.
+#####################################################################
+my $g = Graph::Directed->new;
+$g->add_edges(@$_) for grep { defined } @{ $d->{char_edges} };
+$g->add_edges(@$_) for grep { defined } @{ $d->{null_edges} };
+
+#####################################################################
+# The `Graph::RandomPath` does what its name implies.
+#####################################################################
+my $random_path = Graph::RandomPath->create_generator($g,
+  $d->{start_vertex},
+  $d->{final_vertex},
+  max_length => 200,
+);
+
+#####################################################################
+# Finally we can generate 10 examples and print them out.
+#####################################################################
+binmode STDOUT, ':utf8';
+
+my $more = 10;
+while ($more) {
+  my @path = $random_path->();
+
+  next unless verify_path_stack(@path);
+
+  my @via_path;
+  for (my $ix = 1; $ix < @path; ++$ix) {
+    my @vias = keys %{ $labels{$path[$ix-1]}{$path[$ix]} // {} };
+    next unless @vias;
+    my $random_class = $vias[ int(rand @vias) ];
+    push @via_path, $random_class;
+  }
+
+  next unless verify_path_dfa(@via_path);
+
+  for my $random_class (@via_path) {
+    # TODO: the next two choices should really be random
+    my $first_range = $classes{$random_class}->[0];
+    my $first_ord = $first_range->[0];
+    my $char = chr $first_ord;
+    die unless $d->{input_to_symbol}[$first_ord] eq $random_class;
+    print $char;
+  }
+
+  print "\n";
+  $more -= 1;
+}
+```
+
+Usage:
+
+```
+% perl random-samples.pl rfc3986.URI.json.gz
+A:/@?#/!?
+GV.:#
+VV1AA5+:/@%5A//@/%5AV////@:/_%A6@/?#1
+G++5:/!A%63@///5#:/
+GG0-+5+:/?#0@:
+G:V+#//?/?/
+A:?!??@/%AA/
+A1+A://:-%3A%3A.@[VA.!-+:+!1]:3251
+V:/?#
+V://[::]//?#
+```
+
+They may not look quite like `https://example.org/` but nevertheless
+match the `URI` grammar in RFC 3986. There are many ways to guide this
+process and indeed other ways to generate random samples. In many
+cases it may actually be best to generate special data files that
+constrain the language like imposing a prefix of `http:` or limiting
+the range of permissable characters. A particularily useful case would
+be a data file for `rfc3986-URI - rfc2396-URI-reference`, i.e., any
+RFC 3986 URI that was not allowed under the rules of the predecessor
+of the specification. Generating counter-examples is pretty much the
+same, just generate paths that do not reach the final vertex or fail
+one of the other tests.
+
+If you recall the previous sample application that identifies gaps in
+test suites, those gaps can easily be filled by random data. For
+instance, in order to achieve perfect `forwards` state coverage, the
+random data generator could be instructed to generate a sample for
+each of the states that are not covered by the existing samples. For
+the example there, the XML test suite, it might also be useful to
+have additional constraints like that the sample be well-formed XML.
+The million monkeys working behind the scene of the program above
+can take care of that aswell, with such a test added, albeit slowly.
