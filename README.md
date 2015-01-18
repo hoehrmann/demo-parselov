@@ -818,7 +818,8 @@ useful to create an ordered choice `if A then A else B`. This would
 disambiguate between A and B. Typical applications include support
 for legacy constructs in grammars or other fallback rules. This can
 be implemented just like the union, but when creating the backwards
-automaton, the unwanted edges would be left out.
+automaton, the unwanted edges would be left out. Alternatively, an
+ordered choice `a || b` can also be expressed as `a | (b - a)`.
 
 It is also possible to create interleavings (switching from one
 automaton to another) and other constructs with similar effort.
@@ -974,7 +975,7 @@ Instead, a data file for a more liberal JSON grammar could be made,
 and then the desired modifications could be applied as explained
 above.
 
-### Analysing data format test suite completeness
+### Analysing data format test suites for completeness
 
 Since the main part of the parsing process is entirely transparent to
 higher-level code, it is easy to analyse which parts of the data files
@@ -1094,9 +1095,9 @@ prints 10 random examples assuming there is a valid string.
 #!perl -w
 use Modern::Perl;
 use Graph::Directed;
-use YAML::XS;
 use Graph::RandomPath;
 use IO::Uncompress::Gunzip qw/gunzip/;
+use YAML::XS;
 
 local $Storable::canonical = 1;
 
@@ -1299,3 +1300,147 @@ the example there, the XML test suite, it might also be useful to
 have additional constraints like that the sample be well-formed XML.
 The million monkeys working behind the scene of the program above
 can take care of that aswell, with such a test added, albeit slowly.
+
+### Syntax highlighting
+
+A simple form of syntax highlighting is associating each character in
+a document or protocol message with a colour according to an ideally
+complete syntactic analysis. An easy but inefficient approach is to
+take a parse tree found by a higher-level parser, which should contain
+all interesting information, and colour based on the names of the 
+non-terminals therein (possibly also considering other structural
+properties of the tree). It would also be possible to use the states
+of the forwards or the backwards automaton, where the backwards
+automaton generally knows more about the structure of a document and
+would thus produce better results. The following code shows a simple
+implementation using the backwards automaton.
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use List::MoreUtils qw/uniq/;
+use List::UtilsBy qw/partition_by sort_by nsort_by/;
+use IO::Uncompress::Gunzip qw/gunzip/;
+use Term::ANSIColor;
+use if $^O eq "MSWin32", 'Win32::Console::ANSI';
+
+local $Storable::canonical = 1;
+
+my ($path, $file, @highlight) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+#####################################################################
+# The graph is simply all edges combined.
+#####################################################################
+my $g = Graph::Directed->new;
+$g->add_edges(@$_) for grep { defined } @{ $d->{char_edges} };
+$g->add_edges(@$_) for grep { defined } @{ $d->{null_edges} };
+
+#####################################################################
+# The following maps each vertex to possible stack conigurations when
+# visiting the vertex when coming from the `start_vertex`. 
+#####################################################################
+my @todo = { vertex => $d->{start_vertex}, stack => [] };
+my %inside_and_self;
+while (@todo) {
+  my $current = pop @todo;
+  
+  ###################################################################
+  # Since there may be loops in the graph it is necessary to break
+  # out of such cycles at some point. This simply looks at values on
+  # the stack disregarding their order and stops when the same set of
+  # values on the stack has already been processed for a vertex.
+  ###################################################################
+  my $sig = join ' ', sort { $a cmp $b } uniq @{ $current->{stack} };
+  next if $inside_and_self{ $current->{vertex} }{$sig};
+  $inside_and_self{ $current->{vertex} }{$sig} = $current;
+
+  if (($d->{vertices}[$current->{vertex}]{type} // "") eq 'start') {
+    push @{ $current->{stack} },
+      $d->{vertices}[$current->{vertex}]{text};
+  }
+  if (($d->{vertices}[$current->{vertex}]{type} // "") eq 'final') {
+    pop @{ $current->{stack} }
+      if defined $current->{stack}[-1] and
+        $d->{vertices}[$current->{vertex}]{text}
+          eq $current->{stack}[-1];
+  }
+  unshift @todo, map { { vertex => $_,
+    stack => [ @{ $current->{stack} } ] } }
+      $g->successors($current->{vertex});
+}
+
+#####################################################################
+# Then we can associate the symbols the user asked to highlight with
+# colours. For simplicity and portability this supports six colours.
+#####################################################################
+my @colours = qw/yellow cyan magenta green red blue/;
+my %highlight_to_colour = map {
+  $highlight[$_] => $colours[$_]
+} 0 .. $#highlight;
+my %edge_to_colour;
+
+#####################################################################
+# Then each set of edges, where each set corresponds to a state in
+# the backwards transducers, is associated with a colour. To do so,
+# this just looks at the outgoing `char_edges` and derives a colour
+# based on the possible values on the stack at each exit point. This
+# produces reasonable results for deeply nested token-like symbols.
+# A more sophisticated approach would also look at other vertices in
+# the edge set to establish more context. Similarily, if there are
+# multiple possible colours, this takes the colour from a deeply
+# nested one, but not necessarily the most deeply nested one. A more
+# sophisticated approach could also make better choices there.
+#####################################################################
+for (my $ix = 1; $ix < @{ $d->{char_edges} }; ++$ix) {
+  next unless defined $d->{char_edges}[$ix];
+  for my $e (@{ $d->{char_edges}[$ix] }) {
+    my @tmp = values %{ $inside_and_self{ $e->[0] } };
+    for (@tmp) {
+      my @edge_colours = grep { defined } map {
+        $highlight_to_colour{$_}
+      } @{ $_->{stack} };
+      $edge_to_colour{$ix} //= $edge_colours[-1];
+    }
+  }
+}
+
+#####################################################################
+# The following is just the typical reading of data and simulating
+# the finite automata in order to identify a list of edge sets.
+#####################################################################
+open my $f, '<:utf8', $file;
+my $chars = do { local $/; binmode $f; <$f> };
+my @chars = split//, $chars;
+my @vias = map { $d->{input_to_symbol}[ord $_] } @chars;
+
+my $fstate = 1;
+my @forwards = ($fstate);
+push @forwards, map {
+  $fstate = $d->{forwards}[$fstate]{transitions}{$_} // 0
+} @vias;
+
+my $bstate = 1;
+my @edges = reverse map {
+  $bstate = $d->{backwards}[$bstate]{transitions}{$_} || 0;
+} reverse @forwards;
+
+#####################################################################
+# Now the original file can be printed out with the colours added.
+#####################################################################
+for (my $ix = 0; $ix < @edges - 1; ++$ix) {
+  my $bwd = $edges[$ix];
+  print color($edge_to_colour{$bwd}) if $edge_to_colour{$bwd};
+  print $chars[$ix];
+  print color('reset') if $edge_to_colour{$bwd};
+}
+```
+
+Results should look like this:
+
+![Syntax colouring screenshot](./blob/master/parselov-highlight.png?raw=true)
