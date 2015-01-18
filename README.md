@@ -1444,3 +1444,24 @@ for (my $ix = 0; $ix < @edges - 1; ++$ix) {
 Results should look like this:
 
 ![Syntax colouring screenshot](./parselov-highlight.png?raw=true)
+
+As explained in the code comments, since the colouring is based on a
+single vertex in the subgraph represented by an edge set, for larger
+constructs the colouring can be a bit off. That is easily addressed
+by considering all the vertices in an edge set. It would also be 
+possible to consider the preceding edge set, and so on, incrementally
+increasing the observable detail, up to just parsing documents
+properly. Resolution can also be decreased by colouring based on
+`forwards` states. A reason to do that would be performance and space
+savings.
+
+If syntax colouring is all one cares about, further space can be
+saved by minimising the finite state transducers. Doing so would
+follow the standard set parititoning algorithm, except that instead
+of preserving acceptance of the automaton, the colouring would be
+preserved (so states with different colours belong to different
+sets in the initial partitioning). Furthermore, states that differ
+only in the transitions to the non-accepting sink state (a fatal
+error encountered during parsing) can be merged aswell, which would
+make the colouring more fault tolerant.
+
