@@ -1443,4 +1443,4 @@ for (my $ix = 0; $ix < @edges - 1; ++$ix) {
 
 Results should look like this:
 
-![Syntax colouring screenshot](./blob/master/parselov-highlight.png?raw=true)
+![Syntax colouring screenshot](./parselov-highlight.png?raw=true)
