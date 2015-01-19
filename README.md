@@ -1334,45 +1334,40 @@ gunzip $path => \(my $data);
 
 my $d = YAML::XS::Load($data);
 
-#####################################################################
-# The graph is simply all edges combined.
-#####################################################################
 my $g = Graph::Directed->new;
 $g->add_edges(@$_) for grep { defined } @{ $d->{char_edges} };
 $g->add_edges(@$_) for grep { defined } @{ $d->{null_edges} };
 
 #####################################################################
-# The following maps each vertex to possible stack conigurations when
-# visiting the vertex when coming from the `start_vertex`. 
+# The following creates `(parent, child)` edges in `$p` for all the
+# vertices in the graph, where parents are always `start` vertices.
 #####################################################################
-my @todo = { vertex => $d->{start_vertex}, stack => [] };
-my %inside_and_self;
-while (@todo) {
-  my $current = pop @todo;
-  
-  ###################################################################
-  # Since there may be loops in the graph it is necessary to break
-  # out of such cycles at some point. This simply looks at values on
-  # the stack disregarding their order and stops when the same set of
-  # values on the stack has already been processed for a vertex.
-  ###################################################################
-  my $sig = join ' ', sort { $a cmp $b } uniq @{ $current->{stack} };
-  next if $inside_and_self{ $current->{vertex} }{$sig};
-  $inside_and_self{ $current->{vertex} }{$sig} = $current;
+sub vertices_inside {
+  my ($g, $v) = @_;
+  my @todo = $g->successors($v);
+  my %seen;
+  while (@todo) {
+    my $current = shift @todo;
+    if (($d->{vertices}[$current]{type} // "") =~ /^(final)$/) {
+      next if $d->{vertices}[$current]{with} eq $v;
+      next unless $seen{$d->{vertices}[$current]{with}};
+    }
+    next if $seen{$current}++;
+    if (($d->{vertices}[$current]{type} // "") =~ /^(start)$/) {
+      push @todo, $d->{vertices}[$current]{with};
+      next;
+    }
+    push @todo, $g->successors($current);
+  }
+  keys %seen;
+}
 
-  if (($d->{vertices}[$current->{vertex}]{type} // "") eq 'start') {
-    push @{ $current->{stack} },
-      $d->{vertices}[$current->{vertex}]{text};
+my $p = Graph::Directed->new;
+
+for my $v ($g->vertices) {
+  if (($d->{vertices}[$v]{type} // "") eq 'start') {
+    $p->add_edge($v, $_) for vertices_inside($g, $v);
   }
-  if (($d->{vertices}[$current->{vertex}]{type} // "") eq 'final') {
-    pop @{ $current->{stack} }
-      if defined $current->{stack}[-1] and
-        $d->{vertices}[$current->{vertex}]{text}
-          eq $current->{stack}[-1];
-  }
-  unshift @todo, map { { vertex => $_,
-    stack => [ @{ $current->{stack} } ] } }
-      $g->successors($current->{vertex});
 }
 
 #####################################################################
@@ -1383,29 +1378,34 @@ my @colours = qw/yellow cyan magenta green red blue/;
 my %highlight_to_colour = map {
   $highlight[$_] => $colours[$_]
 } 0 .. $#highlight;
+
 my %edge_to_colour;
 
 #####################################################################
 # Then each set of edges, where each set corresponds to a state in
 # the backwards transducers, is associated with a colour. To do so,
 # this just looks at the outgoing `char_edges` and derives a colour
-# based on the possible values on the stack at each exit point. This
-# produces reasonable results for deeply nested token-like symbols.
-# A more sophisticated approach would also look at other vertices in
-# the edge set to establish more context. Similarily, if there are
-# multiple possible colours, this takes the colour from a deeply
-# nested one, but not necessarily the most deeply nested one. A more
-# sophisticated approach could also make better choices there.
+# based on the vertex and its `start` ancestors.
 #####################################################################
 for (my $ix = 1; $ix < @{ $d->{char_edges} }; ++$ix) {
   next unless defined $d->{char_edges}[$ix];
+  my $null = Graph::Directed->new;
+  $null->add_edges( @{ $d->{null_edges}[$ix] } );
+  my @exits = map { $_->[0] } @{ $d->{char_edges}[$ix] };
+  
   for my $e (@{ $d->{char_edges}[$ix] }) {
-    my @tmp = values %{ $inside_and_self{ $e->[0] } };
-    for (@tmp) {
-      my @edge_colours = grep { defined } map {
-        $highlight_to_colour{$_}
-      } @{ $_->{stack} };
-      $edge_to_colour{$ix} //= $edge_colours[-1];
+    my @todo = $e->[0];
+    my %seen;
+    while (@todo) {
+      my $current = shift @todo;
+      next if $seen{$current}++;
+      push @todo, $p->predecessors($current);
+      next unless ($d->{vertices}[$current]{type} // '') eq 'start';
+      my $col = $highlight_to_colour{
+        $d->{vertices}[$current]{text} // ''
+      };
+      $edge_to_colour{$ix} //= $col;
+      last if defined $col;
     }
   }
 }
@@ -1445,15 +1445,9 @@ Results should look like this:
 
 ![Syntax colouring screenshot](./parselov-highlight.png?raw=true)
 
-As explained in the code comments, since the colouring is based on a
-single vertex in the subgraph represented by an edge set, for larger
-constructs the colouring can be a bit off. That is easily addressed
-by considering all the vertices in an edge set. It would also be 
-possible to consider the preceding edge set, and so on, incrementally
-increasing the observable detail, up to just parsing documents
-properly. Resolution can also be decreased by colouring based on
-`forwards` states. A reason to do that would be performance and space
-savings.
+It would also be possible colour base based on `forwards` states. A
+reason to do that would be performance and space savings, at the
+expense of more incorrect colouring.
 
 If syntax colouring is all one cares about, further space can be
 saved by minimising the finite state transducers. Doing so would
@@ -1464,4 +1458,3 @@ sets in the initial partitioning). Furthermore, states that differ
 only in the transitions to the non-accepting sink state (a fatal
 error encountered during parsing) can be merged aswell, which would
 make the colouring more fault tolerant.
-
