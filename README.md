@@ -372,32 +372,7 @@ function generate_json_formatted_parse_tree(g, edges) {
 
       p.output += '], ' + top.offset + ', ' + p.offset + '],';
     }
-    
-    /////////////////////////////////////////////////////////////////
-    // Actually, `start` and `final` vertices do not mark entrance
-    // and exit points of recursions, rather they are re-used if more
-    // than one such pair of points exists. They are distinguished by
-    // guarding pairs of `prefix` and `suffix` nodes. They actually
-    // need to be mapped to stack operations; it is optional but very
-    // convenient for the `start` and `final` vertices.
-    /////////////////////////////////////////////////////////////////
-    if (g.vertices[p.vertex].type == "prefix") {
-      p.stack.push({"vertex": p.vertex, "offset": p.offset});
-    }
-
-    if (g.vertices[p.vertex].type == "suffix") {
-      if (p.stack.length == 0) {
-        parsers.shift();
-        continue;
-      }
-      
-      var top = p.stack.pop();
-      if (p.vertex != g.vertices[top.vertex]["with"]) {
-        parsers.shift();
-        continue;
-      }
-    }
-    
+        
     /////////////////////////////////////////////////////////////////
     // For a successfull match of the whole input, there are three 
     // conditions to be met: the parser must have reached the end of
@@ -653,6 +628,62 @@ using the sample files included in the repository like so
 ```
 % node demo-parselov.js xml4e.document.json.gz bad.xml
 ```
+
+## Merging regular paths
+
+The deterministic finite state transducers that together form the
+low-level parser compute all possible paths from the `start_vertex`
+of the graph that represents the input grammar to the `final_vertex`.
+The forwards automaton visits only vertices reachable from the start,
+and the backwards automaton eliminates all paths that ultimately do
+not reach the final vertex. However, entering a recursion 1 time or
+23 times is the same to the low-level parser, and the primary job of
+the higher-level parser is to eliminate paths that can't be traversed
+because nesting constraints are violated, or for that matter, finding
+one path on which the nesting constraints are maintained, if the goal
+is to derive a parse tree.
+
+In order to do that, the higher-level parser does not actually have
+to go through all the vertices in the graph that describe the regular
+non-recursive structure of the input. Instead, it could go through a
+much smaller graph that describes only recursions plus whatever else
+is minimally needed to ensure paths in the full graph and the reduced
+graph correspond to one another.
+
+Recursions have vertices in the graph that represent their entry and
+their exit points. The smaller graph can be computed by merging all
+vertices that reach the same recursion entry and exit points without
+passing through a recursion entry or exit point. The data files that
+represent grammars include a projection for each vertex that maps the
+vertex to a representative in this smaller graph, the `stack_vertex`.
+
+Here is what this looks like from the perspective of the `element`
+production in the XML 1.0 4th Edition specification:
+
+![XML `element` stack vertex graph](./xml-stack-graph.png?raw=true)
+
+Matching an `element` means finding a path from the `start element`
+at the top to the `final element` vertex in the box. There are two
+instances of `element` in the graph because the top-level element is
+different from descendants of it because one has to go over `content`
+prior to visiting a descendant element. The vertices `370` and `371`
+represent an ambiguity in the XML grammar, they represent `CharData`
+non-terminals. The corresponding rule is
+
+```
+content ::= CharData?
+  ((element | Reference | CDSect | PI | Comment) CharData?)*
+```
+
+Since `CharData` is optional, but also matches the empty string, we
+can always choose whether empty character data in an element goes 
+unreported, or is reported as zero-length match for `CharData`. The
+W3C, who maintain the grammar for XML, are aware of this issue, but
+have so far refused to fix it.
+
+The stack graph projection for every vertex is available through the
+`g.vertices[v].stack_vertex` property, to stick with the syntax used
+in the examples above.
 
 ## Limitations
 
@@ -1184,10 +1215,10 @@ sub verify_path_stack {
   for (my $ix = 0; $ix < @path; ++$ix) {
     my $vd = $d->{vertices}[ $path[$ix] ];
     next unless $vd->{type};
-    if ($vd->{type} eq 'prefix') {
+    if ($vd->{type} eq 'start') {
       push @stack, $vd->{with};
     }
-    if ($vd->{type} eq 'suffix') {
+    if ($vd->{type} eq 'final') {
       return unless @stack;
       my $top = pop @stack;
       return unless $top eq $path[$ix];
