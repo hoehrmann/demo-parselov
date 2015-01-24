@@ -666,10 +666,9 @@ Matching an `element` means finding a path from the `start element`
 at the top to the `final element` vertex in the box. There are two
 instances of `element` in the graph because the top-level element is
 different from descendants of it because one has to go over `content`
-prior to visiting a descendant element. The vertices `370` and `371`
+prior to visiting a descendant element. The vertices `371`, `372`,
 represent an ambiguity in the XML grammar, they represent `CharData`
-non-terminals. The same goes for edges that bypass vertex `367`. The
-corresponding rule is
+non-terminals. Same for vertex `365`. The corresponding rule is
 
 ```
 content ::= CharData?
