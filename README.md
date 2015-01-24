@@ -1389,10 +1389,7 @@ my %edge_to_colour;
 #####################################################################
 for (my $ix = 1; $ix < @{ $d->{char_edges} }; ++$ix) {
   next unless defined $d->{char_edges}[$ix];
-  my $null = Graph::Directed->new;
-  $null->add_edges( @{ $d->{null_edges}[$ix] } );
-  my @exits = map { $_->[0] } @{ $d->{char_edges}[$ix] };
-  
+
   for my $e (@{ $d->{char_edges}[$ix] }) {
     my @todo = $e->[0];
     my %seen;
@@ -1458,3 +1455,43 @@ sets in the initial partitioning). Furthermore, states that differ
 only in the transitions to the non-accepting sink state (a fatal
 error encountered during parsing) can be merged aswell, which would
 make the colouring more fault tolerant.
+
+### Extracting ABNF grammar rules from RFCs
+
+The sytax highlighting script provides us with a cheap way to
+extract rudimentary information from documents. One interesting
+example is extracting ABNF grammars from RFC standard documents.
+To do so we can make a couple of changes to the ABNF grammar from
+RFC 5234. One change we need is that in RFCs the grammars are
+typically indented. It is also necessary to provide an alternative
+to match things that are not ABNF grammars. That gives:
+
+```
+RFC-with-ABNF  = *(rulelist / other-line)
+
+other-line     = *(%x20 / %x09 / %x0C / %x21-7E) %x0D %x0A
+
+rule           =  *WSP rulename defined-as elements c-nl
+```
+
+Furthermore, ABNF requires using CRLF as line terminator. It would
+be possible to change the grammar so it also accepts bare LF instead,
+but it is easier to simply ensure the RFC text uses CRLFs aswell.
+
+![ABNF extraction screenshot](./extract-abnf.png?raw=true)
+
+This is of course not guaranteed to work perfectly in all cases. For
+instance, applying the script and grammar to RFC 5234 itself would
+highlight example code that is meant to illustrate the ABNF syntax,
+not something that you would want to extract. Likewise, some RFCs
+will certainly have text that looks like ABNF but is something else.
+RFC text also contains page headers and footers, and it is possible
+that there are ABNF rules in RFCs with a page break in the middle.
+It would be possible to further modify the grammar to allow these
+page breaks, but that would make the grammar much more complex. It
+is easier to eliminate them as pre-processing step. Still, cursory
+testing suggests this simple approach may work even better than the
+[only other tool](https://tools.ietf.org/abnf/) designed to do this,
+which has trouble extracting the ABNF from RFC 4627 (JSON) correctly.
+It would be very interesting to run both tools against all the RFCs
+and compare the results.
