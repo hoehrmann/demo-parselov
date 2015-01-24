@@ -668,7 +668,8 @@ instances of `element` in the graph because the top-level element is
 different from descendants of it because one has to go over `content`
 prior to visiting a descendant element. The vertices `370` and `371`
 represent an ambiguity in the XML grammar, they represent `CharData`
-non-terminals. The corresponding rule is
+non-terminals. The same goes for edges that bypass vertex `367`. The
+corresponding rule is
 
 ```
 content ::= CharData?
