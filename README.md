@@ -666,20 +666,7 @@ Matching an `element` means finding a path from the `start element`
 at the top to the `final element` vertex in the box. There are two
 instances of `element` in the graph because the top-level element is
 different from descendants of it because one has to go over `content`
-prior to visiting a descendant element. The vertices `371`, `372`,
-and `365` represent an ambiguity in the XML grammar. The corresponding
-rule is
-
-```
-content ::= CharData?
-  ((element | Reference | CDSect | PI | Comment) CharData?)*
-```
-
-Since `CharData` is optional, but also matches the empty string, we
-can always choose whether empty character data in an element goes 
-unreported, or is reported as zero-length match for `CharData`. The
-W3C, who maintain the grammar for XML, are aware of this issue, but
-have so far refused to fix it.
+prior to visiting a descendant element. 
 
 The stack graph projection for every vertex is available through the
 `g.vertices[v].stack_vertex` property, to stick with the syntax used
