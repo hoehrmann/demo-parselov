@@ -667,8 +667,8 @@ at the top to the `final element` vertex in the box. There are two
 instances of `element` in the graph because the top-level element is
 different from descendants of it because one has to go over `content`
 prior to visiting a descendant element. The vertices `371`, `372`,
-represent an ambiguity in the XML grammar, they represent `CharData`
-non-terminals. Same for vertex `365`. The corresponding rule is
+and `365` represent an ambiguity in the XML grammar. The corresponding
+rule is
 
 ```
 content ::= CharData?
@@ -684,6 +684,241 @@ have so far refused to fix it.
 The stack graph projection for every vertex is available through the
 `g.vertices[v].stack_vertex` property, to stick with the syntax used
 in the examples above.
+
+## Pairing recursions in parallel
+
+The backtracking higher-level parser shown earlier is not very smart.
+For instance, ordinarily the finite state transducers already ensure
+that any regular `start` vertex has a matching `final` vertex, but if
+the parser is forced to backtrack, it will probably jump back to a
+position where a regular part of the match is ambiguous. When there
+is a choice between multiple recursive symbols, it might choose `x`,
+traverse the graph, and find out that it actually needed a `z`. Then
+it takes `y`, finds out again that it needs a `z`, and starts over
+again. There are many ways to make it smarter, but it is also possible
+to avoid backtracking altogether by processing all alternatives in
+parallel.
+
+One approach there would be advance all "parsers" in the `parsers`
+array one step (or up to the next edge) before continuing, but there
+can be way too many alternatives for some grammars, and quite often
+the parser states would differ only in what is on their individual
+stacks. If you recall that multiple "parsers" are created when there
+are multiple successors to a vertex, there are also cases where a
+vertex has fewer successors than predecessors, i.e., parsers might,
+after exploring some differences, converge on the same path.
+
+Instead of giving each parser its own stack, it is possible to comine
+all possible stack configurations into a graph. Each "parser" can then
+simply point to a vertex in the graph identifying the most-recently
+`pushed` value. That value then links to the value `pushed` before
+itself, and so on and so forth. Since there may be more than one way
+to reach a given vertex, there might be multiple most-recently `pushed`
+values for each vertex. In other words, instead of a `push` to a stack,
+we add a vertex to graph and then point to the added vertex as the
+most recently pushed value; instead of a `pop` from the stack, we move
+the pointer to the predecessors in the graph.
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use List::MoreUtils qw/uniq/;
+use List::UtilsBy qw/partition_by sort_by nsort_by/;
+use Graph::SomeUtils ':all';
+use IO::Uncompress::Gunzip qw/gunzip/;
+
+local $Storable::canonical = 1;
+
+my ($path, $file) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+#####################################################################
+# The following is just the typical reading of data and simulating
+# the finite automata in order to identify a list of edge sets.
+#####################################################################
+open my $f, '<:utf8', $file;
+my $chars = do { local $/; binmode $f; <$f> };
+
+my @vias = map { $d->{input_to_symbol}[ord $_] } split//, $chars;
+
+my $fstate = 1;
+my @forwards = ($fstate);
+push @forwards, map {
+  $fstate = $d->{forwards}[$fstate]{transitions}{$_} // 0
+} @vias;
+
+my $bstate = 1;
+my @edges = reverse map {
+  $bstate = $d->{backwards}[$bstate]{transitions}{$_} || 0;
+} reverse @forwards;
+
+#####################################################################
+# This script is going to generate a graph using file offsets paired
+# with vertex identifiers, just like when generating the dot output.
+# These helper functions combine two integers into a single string.
+#####################################################################
+sub pair {
+  my ($offset, $v) = @_;
+  return pack('N2', $offset, $v);
+}
+
+sub unpair {
+  my ($pair) = @_;
+  return unpack('N2', $pair);
+}
+
+#####################################################################
+# The following will generate a graph that links all vertices in the
+# graph produced by the deterministic finite state transducers to all
+# possible stack configurations when encountering the vertex. Graph
+# `$o` holds the view of the stack, `$g` the (unused) parse graph.
+#####################################################################
+my $g = Graph::Directed->new;
+my $start = pair(0, $d->{start_vertex});
+my $final = pair($#edges, $d->{final_vertex});
+$g->add_vertex($start);
+
+my $o = Graph::Directed->new;
+$o->add_vertex($start);
+
+#####################################################################
+# The algorithm transfers a view of the stack from vertices to their
+# immediate successors. The `@heads` are the vertices that still need
+# to be processed for a given edge, because their successors are the
+# newly added vertices in the following edge.
+#####################################################################
+my @heads = ($start);
+
+#####################################################################
+# This projection could be used to merge all regular paths in the
+# grammar and only retain recursions plus whatever is needed to keep
+# the possible paths through the graph for recursive vertices intact.
+# Refer to the section "Merging regular paths" in the documentation.
+#####################################################################
+sub map_edge {
+  my ($edge) = @_;
+  return $edge;
+  return [ map { $d->{vertices}[$_]{stack_vertex} } @$edge ];
+}
+
+for (my $ax = 0; $ax < @edges; ++$ax) {
+  my $edge = $edges[$ax];
+  
+  ###################################################################
+  # Edge sets describe graph parts that, when concatenated, describe
+  # a parse graph. The following code does just that, it creates new
+  # vertices from the edge sets, noting the current offset, and then
+  # adds them to the overall graph. It is convenient to keep track of
+  # vertices added in this step, hence `$null` and `$char` graphs.
+  ###################################################################
+  my $null = Graph::Directed->new;
+  my $char = Graph::Directed->new;
+  
+  $null->add_edges(map { [
+    pair($ax, $_->[0]), pair($ax, $_->[1])
+  ] } map { map_edge($_) } @{$d->{null_edges}[$edge]});
+
+  $char->add_edges(map { [
+    pair($ax, $_->[0]), pair($ax + 1, $_->[1])
+  ] } map { map_edge($_) } @{$d->{char_edges}[$edge]});
+
+  ###################################################################
+  # Since we are going transfer views of the stack from vertices to
+  # their successors, it is convenient to get hold of all successors
+  # from a single graph, so the edges are combined into `$both`.
+  ###################################################################
+  my $both = Graph::Directed->new;
+  $both->add_edges($null->edges);
+  $both->add_edges($char->edges);
+
+  ###################################################################
+  # It can be convenient to build the parse graph alongside running
+  # this algorithm, `$g`, but the algorithm does not depend on it.
+  ###################################################################
+  $g->add_edges($both->edges);
+  
+  my %seen;
+  my @todo = @heads;
+  while (@todo) {
+    my $v = shift @todo;
+    
+    #################################################################
+    # Successors have to be processed after their predecessors. 
+    #################################################################
+    if (not $seen{$v}++) {
+      push @todo, $v;
+      push @todo, $null->successors($v);
+      next;
+    }
+
+    my ($vix, $vid) = unpair($v);
+    
+    if (($d->{vertices}[$vid]{type} // "") =~ /^(start|if)$/) {
+      ###############################################################
+      # `start` vertices correspond to `push` operations when using a
+      # stack. In the graph representation, the most recently pushed
+      # vertex is, accordingly, a predecessor of the current vertex.
+      ###############################################################
+      $o->add_edge($v, $_) for $both->successors($v);
+      
+    } elsif (($d->{vertices}[$vid]{type} // "") =~ /^(final|fi)$/) {
+      ###############################################################
+      # `final` vertices correspond to `pop` operations when using a
+      # stack. They have to be matched against all the `predecessors`
+      # aka the most recently pushed vertices on the stack graph, and
+      # when they match, a `pop` is simulated by making the previous
+      # values, the second-most-recently-pushed vertices, available
+      # to the successors of the current vertex. Since the current
+      # vertex can be its own (direct or indirect) successor, due to
+      # right recursion, the successor may have to be processed more
+      # than one time to clear the emulated stack of matching values.
+      ###############################################################
+      for my $parent ($o->predecessors($v)) {
+        my ($pix, $pid) = unpair($parent);
+        if (not ($d->{vertices}[$pid]{with} // '') eq $vid) {
+          $o->delete_edge($parent, $v);
+          next;
+        }
+        for my $s ($both->successors($v)) {
+          for my $pp ($o->predecessors($parent)) {
+            next if $o->has_edge($pp, $s);
+            $o->add_edge($pp, $s);
+            push @todo, $s;
+          }
+        }
+      }
+    } else {
+      ###############################################################
+      # Other vertices do not affect the stack and so successors have
+      # the all the possible stack configurations available to them.
+      ###############################################################
+      for my $s ($both->successors($v)) {
+        $o->add_edge($_, $s) for $o->predecessors($v);
+      }
+    }    
+  }
+
+  ###################################################################
+  # The new `@heads` are the end points of `char` edges. This should
+  # use only vertices that can actually be reached from the previous
+  # `@heads`, over a path that does not violate nesting constraints,
+  # but the low-level parser generally ensures there are no vertices
+  # added that cannot be reached from the `start_vertex`.
+  ###################################################################
+  @heads = uniq map { $_->[1] } $char->edges;
+}
+```
+
+In the code above the `@heads` array corresponds to all the `p.vertex`
+properties in the backtracking parser shown earlier, and the graph
+`$o` links any `p.vertex` to what used to be the `p.stack`s. If the
+`$o` graph has an edge `$o->has_edge($start, $final)` and the `$final`
+vertex is reachable from `$start`, then the input matches the grammar.
 
 ## Limitations
 
