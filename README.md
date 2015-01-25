@@ -920,6 +920,27 @@ properties in the backtracking parser shown earlier, and the graph
 `$o` graph has an edge `$o->has_edge($start, $final)` and the `$final`
 vertex is reachable from `$start`, then the input matches the grammar.
 
+Note that the process above is entirely generic and does not depend on
+any particular behavior of the deterministic finite state transducers;
+it would be sufficient if they simply report all possible edges given
+a particular input character. In other words, the code above resembles
+simulating a non-deterministic pushdown transducer exploring all the
+possible transitions in parallel. The finite state transducers in turn
+correspond to an exhaustive parallel simulation that ignores the stack.
+When fully computed, they ensure that there are only relatively few
+edges added in each step and that all vertices are reachable from the
+`start_vertex` and reach the `final_vertex`. Furthermore, if the
+non-recursive regular paths have already been computed by the finite
+machines, they can be ignored in this step, as discussed in the
+previous section.
+
+The code above processes the list of edge sets produces by the finite
+automata from the left to the right. It would also be possible to use
+it from the right to the left and execute it alongside the `backwards`
+automaton. And as with the backtracking parser, it should be easy to
+see that most of the process above can be pre-computed and be turned
+into simple machine instructions.
+
 ## Limitations
 
 The basic approach outlined above works well for carefully constructed
