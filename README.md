@@ -977,7 +977,7 @@ while (@todo) {
 }
 ```
 
-where the functions called above would look like this. Parameters
+where the functions called above would look as follows. Parameters
 `$ns`, and `$cs` are the successors of `$v` in the `$null` graph and
 the `$char` graph respectively, the rest should be obvious from the
 previous section.
