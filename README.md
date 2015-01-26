@@ -962,7 +962,8 @@ be computed statically, like building the initial `@todo` list, and
 it does so rather expensively like building temporary graph objects.
 As a first step, let's say we've pre-computed the initial `@todo` and
 the vertex successors the code above derives from the `$null` and
-`$char` graphs. In the abstract, we would then have for each edge:
+`$char` graphs. In the abstract, we would then have for each set of
+edges:
 
 ```perl
 my @todo = ...;
@@ -1901,3 +1902,37 @@ testing suggests this simple approach may work even better than the
 which has trouble extracting the ABNF from RFC 4627 (JSON) correctly.
 It would be very interesting to run both tools against all the RFCs
 and compare the results.
+
+### Converting grammars to regular expressions
+
+A data file can be converted into a regular expression following any
+standard textbook algorithm. If the `forwards` automaton is complete,
+any DFA to RE algorithm can be directly applied to it. The only thing
+to note is that the automaton's transitions are over sets of input
+symbols rather than the input symbols (think "ASCII" and "Unicode"
+for "input symbol" and "character class" as you might know them from
+regular expressions for "sets of input symbols"); the `%classes` map
+in the code to generate random samples can be used to map "character
+classes" back to individual input symbols.
+
+If the `forwards` automaton is not complete, the graph that represents
+the grammar can be used instead. That requires knowing the labels of
+the edges in the graph. The `%labels` map in the code to generate the
+random samples contain them, and likewise the `%classes` map can be
+used to turn the `labels` back into individual input symbols. A common
+textbook algorithm called "state elimination" can be applied to the
+graph (vertices in the graph can be eliminated by connecting their
+predecessors directly to their successors by increasingly more complex
+regular expressions instead of simple "labels").
+
+Not just because loops in the `forwards` automaton or the graph itself
+can be expanded arbitrarily often, regular expressions can be O(4^n)
+larger than their representation in the data files, and the standard
+algorithms, including optimisations to them, typically do not generate
+what one might consider reasonably-sized expressions (for instance,
+they typically do not use the `+` quantifier, and they often to not
+factor expressions on the right side, i.e., they do not simplify an
+expression like `(ac|bc)` into `(a|b)c`. So the results might be
+surprising or disappointing. I do not think kilobyte-sized regex blobs
+should be used as anything but a curiosity, so implementing this is
+left as an excercise to the reader.
