@@ -1926,13 +1926,14 @@ predecessors directly to their successors by increasingly more complex
 regular expressions instead of simple "labels").
 
 Not just because loops in the `forwards` automaton or the graph itself
-can be expanded arbitrarily often, regular expressions can be O(4^n)
-larger than their representation in the data files, and the standard
-algorithms, including optimisations to them, typically do not generate
-what one might consider reasonably-sized expressions (for instance,
-they typically do not use the `+` quantifier, and they often to not
-factor expressions on the right side, i.e., they do not simplify an
-expression like `(ac|bc)` into `(a|b)c`. So the results might be
-surprising or disappointing. I do not think kilobyte-sized regex blobs
-should be used as anything but a curiosity, so implementing this is
-left as an excercise to the reader.
+can be expanded arbitrarily often, regular expressions can be O(4^n),
+or worse, larger than their representation in the data files, and the
+standard algorithms, including optimisations to them, typically do not
+generate what one might consider reasonably-sized expressions if one is
+used to Perl-compatible regular expressions (for instance, they
+typically do not use the `+` quantifier, and they often do not factor
+expressions on the right side, i.e., they do not simplify an expression
+like `(ac|bc)` into `(a|b)c`. So the results might be surprising or
+disappointing. I do not think kilobyte-sized regex blobs should be used
+as anything but a curiosity, so implementing this is left as an
+excercise to the reader.
