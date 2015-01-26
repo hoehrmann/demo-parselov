@@ -928,6 +928,138 @@ automaton. And as with the backtracking parser, it should be easy to
 see that most of the process above can be pre-computed and be turned
 into simple machine instructions.
 
+Also note that using a graph instead of a single stack adds a lot of
+power. A finite state machine with two stacks is already sufficient
+for turing-completeness. Having an essentially infinite number of
+stacks does not add computational power, but if you consider simpler
+machines like deterministic pushdown automata, it might be impossible
+to express the union of two DPDAs as one DPDA (you can simulate them
+in parallel, but what do you do if one automaton wants to `push` while
+the other wants to `pop` if you have only one stack to work with?),
+the approach above would allow them to exist peacefully together, the
+`@heads`, in a manner of speaking, could be the the two states of the
+automata, and the "stack graph" would just be two stacks, one for each
+of them.
+
+Finally note that parallel simulation also makes it easy to extend the
+graph formalism seen so far with features that depend on combining
+multiple paths, like boolean combinators. The data files for XML 1.0
+for instance have `if` and matching `fi` vertices that offer two paths
+to traverse. They are combined using an `andnot` condition. If there
+is a path from the `start_vertex` to the `final_vertex` over the `not`
+part, then the `if` condition fails and both paths are invalid. That
+represents `PITarget ::= Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))`
+and other rules making use of the `-` operator. If the right hand side
+is not recursive, such rules are resolved by the finite transducers,
+but if the right hand side is not regular, the higher-level parser has
+to explore them aswell. The simple backtracking parser shown earlier
+ignores them at the moment.
+
+## Towards a compiler
+
+The code in a previous section does many things at runtime that could
+be computed statically, like building the initial `@todo` list, and
+it does so rather expensively like building temporary graph objects.
+As a first step, let's say we've pre-computed the initial `@todo` and
+the vertex successors the code above derives from the `$null` and
+`$char` graphs. In the abstract, we would then have for each edge:
+
+```perl
+my @todo = ...;
+while (@todo) {
+  my $vid = shift @todo;
+  for ($vid) {
+    when(23) { do_start(...); }
+    when(42) { push @todo, do_final(...); }
+    when(65) { do_other(...); }
+    ...
+  }
+}
+```
+
+where the functions called above would look like this. Parameters
+`$ns`, and `$cs` are the successors of `$v` in the `$null` graph and
+the `$char` graph respectively, the rest should be obvious from the
+previous section.
+
+```perl
+sub do_start {
+  my ($o, $vix, $vid, $ns, $cs) = @_;
+  my $v = pair($vix, $vid);
+  $o->add_edge($v, pair($vix, $_)) for @$ns;
+  $o->add_edge($v, pair($vix + 1, $_)) for @$cs;
+}
+
+sub do_other {
+  my ($o, $vix, $vid, $ns, $cs) = @_;
+  my $v = pair($vix, $vid);
+  
+  for my $parent ($o->predecessors($v)) {
+    $o->add_edge($parent, pair($vix, $_)) for @$ns;
+    $o->add_edge($parent, pair($vix + 1, $_)) for @$cs;
+  }
+}
+
+sub do_final {
+  my ($o, $vix, $vid, $with, $ns, $cs) = @_;
+  my $v = pair($vix, $vid);
+  my @todo;
+  for my $parent ($o->predecessors($v)) {
+    my ($pix, $pid) = unpair($parent);
+    if ($pid ne $with) {
+      $o->delete_edge($parent, $v);
+      next;
+    }
+    for my $pp ($o->predecessors($parent)) {
+      for my $sid (@$ns) {
+        my $s = pair($vix, $sid);
+        next if $o->has_edge($pp, $s);
+        $o->add_edge($pp, $s);
+        push @todo, $sid;
+      }
+      for my $sid (@$cs) {
+        my $s = pair($vix + 1, $sid);
+        $o->add_edge($pp, $s);
+      }
+    }
+  }
+  return @todo;
+}
+```
+
+We have seen earlier how the graph that represents the input grammar
+can be simplified so it consists mostly of vertices that represent
+recursions. Now, especially if we do that, it is possible to replace
+calls to the functions above with just a couple of instructions. For
+instance, from the perspective of most vertices, there can only ever
+be one most recently `pushed` vertex in the `$o` graph, which makes
+two of the loops in `do_final` redundant for them. Furthermore, most
+vertices only have one successor, either in `$ns` or in `$cs`, so
+those loops are often superfluous aswell.
+
+The possible return values of `do_final` are only interesting if
+there is a cycle in the `$null` graph (such cycles represent left and
+right recursion); indeed, if there are no such cycles, we do not need
+the `while (@todo)` loop and can simply process vertices in
+topological order. The `do_other` routine is for unlabeled vertices
+that generally represent terminals in the grammar. Since we do not
+care about those, instead of copying the predecessors in the "stack
+graph" from one unlabeled vertex to another unlabeled vertex, we
+could replace one with the other simply by updating the offset
+position and vertex id of the previous one, in most cases. 
+
+If all vertices in the graph can only ever see one most recently
+`pushed` value, we do not even need a graph and can use an ordinary
+stack instead (whether that is the case is not necessarily decidable,
+but grammars used in practise generally avoid that kind of problem).
+If the grammar you are interested in is not recursive or uses only
+right recursion, none of this is even needed, you can just use the
+backtracking parser presented earlier.
+
+And that is just the point. Compilers ought to figure out how to
+analyse formal languages efficiently, rather than bothering humans
+with it.
+
 ## Limitations
 
 The basic approach outlined above works well for carefully constructed
