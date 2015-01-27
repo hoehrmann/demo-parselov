@@ -948,7 +948,12 @@ for instance have `if` and matching `fi` vertices that offer two paths
 to traverse. They are combined using an `andnot` condition. If there
 is a path from the `start_vertex` to the `final_vertex` over the `not`
 part, then the `if` condition fails and both paths are invalid. That
-represents `PITarget ::= Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))`
+represents
+
+```
+PITarget ::= Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))
+```
+
 and other rules making use of the `-` operator. If the right hand side
 is not recursive, such rules are resolved by the finite transducers,
 but if the right hand side is not regular, the higher-level parser has
