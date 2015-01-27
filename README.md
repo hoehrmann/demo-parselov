@@ -1928,8 +1928,8 @@ so the buffer up to the cursor position can be put through the
 e.g. up to the next white-space character, to, for instance, offer a
 list of words that would complete the current input.
 
-Back in 2007 I made a simple webapp demonstrating this approach for
-[RFC 3986 URIs](http://www.websitedev.de/temp/rfc3986-check.html.gz).
+Back in 2007 I made a simple webapp demonstrating [this approach for
+RFC 3986 URIs](http://www.websitedev.de/temp/rfc3986-check.html.gz).
 I gather the interface is not very self-explanatory, but the idea is
 that you select `URI` in the list of options and then type `http:` in
 the textarea. The "keyboard" at the top then tells you the characters
