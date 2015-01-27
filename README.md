@@ -1096,7 +1096,7 @@ states with all possible stack values (we only look at one, and the
 stack values correspond to graph vertices, so we have a finite number
 of states and a finite number of stack symbols).
 
-When the process completes and for all combinations of `backwards`
+When the process completes, and for all combinations of `backwards`
 state and last-in value the test condition holds, then we know there
 is no way to violate it. That means we can drop the loops over the
 stack graph vertices from the `do_final` and `do_other` functions
