@@ -1051,15 +1051,63 @@ position and vertex id of the previous one, in most cases.
 
 If all vertices in the graph can only ever see one most recently
 `pushed` value, we do not even need a graph and can use an ordinary
-stack instead (whether that is the case is not necessarily decidable,
-but grammars used in practise generally avoid that kind of problem).
-If the grammar you are interested in is not recursive or uses only
-right recursion, none of this is even needed, you can just use the
-backtracking parser presented earlier.
+stack instead. If the grammar you are interested in is not recursive
+or uses only right recursion, none of this is even needed, you can
+just use the backtracking parser presented earlier.
 
 And that is just the point. Compilers ought to figure out how to
 analyse formal languages efficiently, rather than bothering humans
 with it.
+
+## When one stack is good enough
+
+It is undecidable whether a context-free grammar is ambiguous, but
+we can easily check whether, with the approach above, we would have
+more than one most recently `pushed` value in the "stack graph". As
+an example, the following is a representation of the stack graph for
+the ABNF grammar format currently defined in RFC 5234.
+
+![Simplified stack graph for ABNF](./rfc5234-stack.png?raw=true)
+
+There is only one point where a `start` vertex has more than one
+successor. However, the paths from `start element` to `start option`
+and to `start group` are mutually exclusive (one goes over `[`, the
+other goes over `(`). There might be other issues lurking (what, for
+instance, if there is a choice between two paths, one where we would
+`pop` a value, and do nothing on the other path?), but there is a
+simple way to be sure without a deeper analysis of the graph.
+
+The `backwards` automaton is finite. That means we can exhaustively
+simulate it. Instead of going over all the edges from a direct match,
+we can change the code to process a single set of edges (which map
+directly to `backwards` automaton states) and return; there are only
+two bits of state, the `$o` graph representing the stack and the list
+`@heads`, which corresponds to the states that remain active. If
+there is at most one active state, and all its predecessors in `$o`
+have only one successor, then the graph is equivalent to a stack and
+we can continue with the next state in the `backwards` automaton. We
+need to note the most recently `pushed` value so we can process all
+states with all possible stack values (we only look at one, and the
+stack values correspond to graph vertices, so we have a finite number
+of states and a finite number of stack symbols).
+
+When the process completes and for all combinations of `backwards`
+state and last-in value the test condition holds, then we know there
+is no way to violate it. That means we can drop the loops over the
+stack graph vertices from the `do_final` and `do_other` functions
+seen previously for the particular grammar. We could also memorise
+the results from the exhaustive simulation and call it "deterministic
+pushdown automaton".
+
+Note that this automaton tolerates non-recursive ambiguities, the
+projection to the `stack_vertex` hides them inside the states of the
+low-level parser. One way to use this would be to re-write the list
+of edges produced by the low-level parser to eliminate paths that are
+ultimately unsuccessful due to violation of nesting constraints. It
+would also be possible to increase the bound from one stack to any
+finite number of stacks (some grammars allow such finite bounds), so
+we could simulate a small number of deterministic parsers in parallel
+which can be useful in some situations.
 
 ## Limitations
 
