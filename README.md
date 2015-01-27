@@ -1916,6 +1916,53 @@ only in the transitions to the non-accepting sink state (a fatal
 error encountered during parsing) can be merged aswell, which would
 make the colouring more fault tolerant.
 
+### Syntax auto-completion
+
+Suppose you have a text editor with some text in a buffer and some
+current cursor position, and the user of the editor would like some
+help on how to complete what they have typed so far. The `forwards`
+automaton encodes directly which characters can be used for the next
+position (and by extension, the characters at any position after it),
+so the buffer up to the cursor position can be put through the
+`forwards` automaton and it can be explored a little bit further,
+e.g. up to the next white-space character, to, for instance, offer a
+list of words that would complete the current input.
+
+Back in 2007 I made a simple webapp demonstrating this approach for
+[RFC 3986 URIs](http://www.websitedev.de/temp/rfc3986-check.html.gz).
+I gather the interface is not very self-explanatory, but the idea is
+that you select `URI` in the list of options and then type `http:` in
+the textarea. The "keyboard" at the top then tells you the characters
+you are allowed to append. If you append `//[` it will switch into a
+mode that recognises IPv6 addresses allowing you to enter only hex
+digits, a colon, or `v`. Enter `http://[v1138.(Skywalker)]:42?` and
+it will correctly tell you that yes, indeed, that is a proper `URI`,
+although you have never encountered such syntax in the wild. Actually
+this kind of tool makes it easy to discover interesting edge cases
+that could be used for testing, but as explained in a previous section,
+we could just generate all "interesting" test cases automatically.
+
+As a better example, suppose the Apache `httpd` web server came with
+grammar for `.htaccess` files that defines the syntax for the format
+in general and also all the standard instructions supported by the
+standard modules. A user could then type `Add` and the editor could,
+just as the webapp above does, look up in the `forwards` automaton
+what could be added and offer a selection among `AddOutputFilter`,
+`AddType`, `AddLanguage`, and so on. Add syntax colouring and full
+validation against the grammar, as explained in previous sections,
+and you have a pretty nice `.htaccess` editor with little effort. And
+as the code to "find words from current position to white space" or
+whatever else might be useful, can be written generically without any
+reference to particular grammars, supporting other formats in such an
+editor could be as simple as dropping in another data file, with a 
+few customisations like which colour to use for which symbol and
+things like that.
+
+As you can see in the soure code of the "URI checker" example, it is
+just a couple of lines of code that are needed when you have the
+description of a data format in an easily accessible form, such as
+the data files at the code of the system this documentation is about.
+
 ### Extracting ABNF grammar rules from RFCs
 
 The sytax highlighting script provides us with a cheap way to
@@ -1990,3 +2037,7 @@ like `(ac|bc)` into `(a|b)c`. So the results might be surprising or
 disappointing. I do not think kilobyte-sized regex blobs should be used
 as anything but a curiosity, so implementing this is left as an
 excercise to the reader.
+
+## License
+
+Eventually.
