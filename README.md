@@ -1963,6 +1963,162 @@ just a couple of lines of code that are needed when you have the
 description of a data format in an easily accessible form, such as
 the data files at the code of the system this documentation is about.
 
+The following code solves a closely related problem: it prints out
+all seemingly interesting sequences of US-ASCII letters the `forwards`
+automaton recognises by way of having special transitions for them.
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use Storable qw/freeze/;
+use YAML::XS;
+use List::MoreUtils qw/uniq/;
+use IO::Uncompress::Gunzip qw/gunzip/;
+
+local $Storable::canonical = 1;
+
+my ($path, $file) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+#####################################################################
+# To make things simple, we'll scan just for simple [a-z]+ sequences
+#####################################################################
+my @want = uniq map {
+  $d->{input_to_symbol}[ord $_]
+} (('a' .. 'z'), ('A' .. 'Z'));
+
+my %is_wanted = map { $_ => 1 } @want;
+my %is_interesting = ( 0 => 1 );
+
+#####################################################################
+# A `forwards` state is interesting if it discriminates among the
+# wanted characters, i.e., it doesn't move to the same state for all.
+#####################################################################
+for (my $ix = 0; $ix < @{ $d->{forwards} }; ++$ix) {
+  my @dsts = uniq map {
+    $d->{forwards}[$ix]{transitions}{$_} // 0
+  } @want;
+  $is_interesting{$ix}++ if @dsts > 1;
+}
+
+#####################################################################
+# This partitions the `forwards` states into sets based on how the
+# automaton might move over the wanted characters. In essence, this
+# minimises the `forwards` automaton to avoid most duplicate strings.
+#####################################################################
+use Acme::Partitioner;
+my $p = Acme::Partitioner->using(0 .. @{ $d->{forwards} } - 1);
+my $partitioner = $p
+  ->once_by(sub { $is_interesting{$_} // '' })
+  ->then_by(sub {
+    my $ix = $_;
+    my %signature = map { $_,
+      $p->partition_of($d->{forwards}[$ix]{transitions}{$_} // 0)
+    } @want;
+    return Storable::freeze \%signature;
+  })
+  ;
+
+while ($partitioner->refine) {
+  warn "p size = " . $p->size() . "\n";
+}
+
+#####################################################################
+# To merge states, we project all equivalent states onto the first.
+#####################################################################
+my %map;  
+for ($p->all_partitions) {
+  my $new = $_->[0];
+  $map{$_} = $new for @$_;
+}
+
+#####################################################################
+# Then we can build a labeled graph of the merged states.
+#####################################################################
+my $g = Graph::Directed->new;
+my %labels;
+for my $ix (keys %is_interesting) {
+  for my $via (keys %{ $d->{forwards}[$ix]{transitions} }) {
+    next unless $is_wanted{$via};
+    my $dst = $d->{forwards}[$ix]{transitions}{$via} // 0;
+    next if $map{$dst} eq '0';
+    $g->add_edge($map{$ix}, $map{$dst})
+      unless $map{$ix} eq $map{$dst};
+    $labels{$map{$ix}}{$map{$dst}}{$via}++;
+  }
+}
+
+#####################################################################
+# We also need a reverse map for the input character to symbol map.
+#####################################################################
+my %classes;
+$classes{ $d->{input_to_symbol}[0] } = [[0,0]];
+for (my $ax = 1; $ax < @{ $d->{input_to_symbol} }; ++$ax) {
+  my $cs = $d->{input_to_symbol}[$ax];
+  my $ps = $d->{input_to_symbol}[$ax - 1];
+  if ($cs == $ps) {
+    $classes{$cs}[-1][1]++;
+  } else {
+    push @{ $classes{$cs} }, [$ax, $ax];
+  }
+}
+
+#####################################################################
+# Starting from the roots, print out all strings.
+#####################################################################
+my @todo = map { [$_] } $g->predecessorless_vertices;
+while (@todo) {
+  my $p = shift @todo;
+  if ($g->successors($p->[-1])) {
+    push @todo, [@$p, $_] for 
+      $g->successors($p->[-1]);
+  } else {
+    for (my $ix = 1; $ix < @$p; ++$ix) {
+      my @vias = keys %{ $labels{$p->[$ix-1]}{$p->[$ix]} };
+      
+      # Note that this prints out the first member of a class.
+      # It does not print out the entire class. Maybe it should.
+      my @firsts = map { $classes{$_}[0][0] } @vias;
+      if (@firsts > 1) {
+        printf "[%s]", join '|', map chr, @firsts;
+      } else {
+        printf "%s", map chr, @firsts;
+      }
+    }
+    print "\n";
+  }
+}
+```
+
+Applying this to the XML 1.0 data file should print out something
+like:
+
+```
+[I|H|R|Q|F|O|C|D|E|P|L|G|Y|N|A|U|M|S|T|K|B|V]
+X[R|Q|H|I|F|E|D|C|O|Y|G|L|P|U|A|N|S|X|T|V|B|K]
+NO
+XM[I|H|R|Q|F|O|C|D|E|P|L|Y|G|A|N|U|X|M|S|T|K|B|V]
+ANY
+YES
+EMPTY
+CDATA
+FIXED
+NDATA
+...
+```
+
+The complicated lines above correspond to the complement of "xml".
+That is a special case in the grammar that disambiguates the XML
+declaration from processing instructions. Most of the literals are
+used only in the `prolog` of an XML document, but you might recognise
+`CDATA` from `<![CDATA[]]>` sections. Auto-completion from a specific
+point as discussed in this section can be implemented much like this,
+constrained to a specific state at the cursor position.
+
 ### Extracting ABNF grammar rules from RFCs
 
 The sytax highlighting script provides us with a cheap way to
