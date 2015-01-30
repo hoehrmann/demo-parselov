@@ -1064,56 +1064,6 @@ And that is just the point. Compilers ought to figure out how to
 analyse formal languages efficiently, rather than bothering humans
 with it.
 
-## When one stack is good enough
-
-It is undecidable whether a context-free grammar is ambiguous, but
-we can easily check whether, with the approach above, we would have
-more than one most recently `pushed` value in the "stack graph". As
-an example, the following is a representation of the stack graph for
-the ABNF grammar format currently defined in RFC 5234.
-
-![Simplified stack graph for ABNF](./rfc5234-stack.png?raw=true)
-
-There is only one point where a `start` vertex has more than one
-successor. However, the paths from `start element` to `start option`
-and to `start group` are mutually exclusive (one goes over `[`, the
-other goes over `(`). There might be other issues lurking (what, for
-instance, if there is a choice between two paths, one where we would
-`pop` a value, and do nothing on the other path?), but there is a
-simple way to be sure without a deeper analysis of the graph.
-
-The `backwards` automaton is finite. That means we can exhaustively
-simulate it. Instead of going over all the edges from a direct match,
-we can change the code to process a single set of edges (which map
-directly to `backwards` automaton states) and return; there are only
-two bits of state, the `$o` graph representing the stack and the list
-`@heads`, which corresponds to the states that remain active. If
-there is at most one active state, and all its predecessors in `$o`
-have only one successor, then the graph is equivalent to a stack and
-we can continue with the next state in the `backwards` automaton. We
-need to note the most recently `pushed` value so we can process all
-states with all possible stack values (we only look at one, and the
-stack values correspond to graph vertices, so we have a finite number
-of states and a finite number of stack symbols).
-
-When the process completes, and for all combinations of `backwards`
-state and last-in value the test condition holds, then we know there
-is no way to violate it. That means we can drop the loops over the
-stack graph vertices from the `do_final` and `do_other` functions
-seen previously for the particular grammar. We could also memorise
-the results from the exhaustive simulation and call it "deterministic
-pushdown automaton".
-
-Note that this automaton tolerates non-recursive ambiguities, the
-projection to the `stack_vertex` hides them inside the states of the
-low-level parser. One way to use this would be to re-write the list
-of edges produced by the low-level parser to eliminate paths that are
-ultimately unsuccessful due to violation of nesting constraints. It
-would also be possible to increase the bound from one stack to any
-finite number of stacks (some grammars allow such finite bounds), so
-we could simulate a small number of deterministic parsers in parallel
-which can be useful in some situations.
-
 ## Limitations
 
 The basic approach outlined above works well for carefully constructed
@@ -1283,6 +1233,288 @@ ordered choice `a || b` can also be expressed as `a | (b - a)`.
 
 It is also possible to create interleavings (switching from one
 automaton to another) and other constructs with similar effort.
+
+Here is an example that creates a combination of two data files where
+the result will match strings that do not match the first data file
+but do match the second data file.
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use List::Util qw/min max/;
+use List::MoreUtils qw/uniq/;
+use List::UtilsBy qw/partition_by sort_by nsort_by/;
+use Graph::SomeUtils ':all';
+use IO::Uncompress::Gunzip qw/gunzip/;
+use IO::Compress::Gzip qw(gzip);
+use Data::AutoBimap;
+use JSON;
+
+local $Storable::canonical = 1;
+
+my ($path1, $path2) = @ARGV;
+
+gunzip $path1 => \(my $data1);
+gunzip $path2 => \(my $data2);
+
+my $d1 = YAML::XS::Load($data1);
+my $d2 = YAML::XS::Load($data2);
+
+sub pair {
+  my ($offset, $v) = @_;
+  return pack('N2', $offset, $v);
+}
+
+sub unpair {
+  my ($pair) = @_;
+  return unpack('N2', $pair);
+}
+
+#####################################################################
+# Create a new alphabet making sure new character sets are disjoint.
+#####################################################################
+my @input_to_symbol = (pair(0, 0));
+my $max = max(scalar(@{ $d1->{input_to_symbol} }), 
+              scalar(@{ $d2->{input_to_symbol} }));
+
+for (my $via = 1; $via < $max; ++$via) {
+  $input_to_symbol[$via] = pair(
+    ($d1->{input_to_symbol}[$via] // 0),
+    ($d2->{input_to_symbol}[$via] // 0),
+  );
+}
+
+my $sm = Data::AutoBimap->new(start => 0);
+$sm->s2n(pair(0, 0));
+my @alphabet = map { $sm->s2n($_) } uniq @input_to_symbol;
+
+#####################################################################
+# Create a new automaton over pairs of states in the input automata. 
+#####################################################################
+sub combine {
+  my ($a1, $a2, $im, $sm, $start, $alphabet) = @_;
+  my %seen;
+  my @states;
+  my @todo = $start;
+
+  while (@todo) {
+    my $current = shift @todo;
+    next if $seen{$current}++;
+    my ($s1, $s2) = unpair($sm->n2s($current));
+    for my $via (@$alphabet) {
+      my ($via1, $via2) = unpair($im->n2s($via));
+      my $dst =
+        $sm->s2n(pair(
+          $a1->[$s1]{transitions}{$via1} // 0,
+          $a2->[$s2]{transitions}{$via2} // 0,
+        ));
+      next unless $dst;
+      $states[$current]{transitions}{$via} = $dst;
+      push @todo, $dst;
+    }
+    
+    #################################################################
+    # For simple boolean combinations like `and` and `xor` this is
+    # the only place that encodes the combination. For more complex
+    # combinations, like `if a then a else b` we would also need to
+    # remove the edges we are not interested in later in the code.
+    #################################################################
+    $states[$current]{accepts} = 
+      (!$a1->[$s1]{accepts})
+        &
+      $a2->[$s2]{accepts};
+  }
+  return @states;
+}
+
+#####################################################################
+# Combine the `forwards` automata.
+#####################################################################
+my $fm = Data::AutoBimap->new(start => 0);
+$fm->s2n(pair(0, 0));
+my @forwards = combine(
+  $d1->{forwards},
+  $d2->{forwards},
+  $sm,
+  $fm,
+  $fm->s2n(pair(1, 1)),
+  [@alphabet],
+);
+$forwards[0] = { transitions => {} };
+
+my $xm = Data::AutoBimap->new(start => 0);
+$xm->s2n(pair(0, 0));
+
+my @ralpha;
+for (my $ix = 0; defined $fm->n2s($ix); ++$ix) {
+  push @ralpha, $ix;
+}
+
+#####################################################################
+# Combine the `backwards` automata.
+#####################################################################
+my $bm = Data::AutoBimap->new(start => 0);
+$bm->s2n(pair(0, 0));
+my @backwards = combine(
+  $d1->{backwards},
+  $d2->{backwards},
+  $fm,
+  $bm,
+  $bm->s2n(pair(1, 1)),
+  [@ralpha]
+);
+$backwards[0] = { transitions => {} };
+
+my $vm = Data::AutoBimap->new(start => 0);
+$vm->s2n(pair(0, 0));
+
+#####################################################################
+# This is most of the new data file.
+#####################################################################
+my $d3 = {
+  start_vertex => $vm->s2n(pair($d1->{start_vertex},
+                                $d2->{start_vertex})),
+  final_vertex => $vm->s2n(pair($d1->{final_vertex},
+                                $d2->{final_vertex})),
+  forwards => \@forwards,
+  backwards => \@backwards,
+  vertices => [{}, {
+    type => "start",
+    text => "$path1 combined with $path2",
+    with => 2,
+  }, {
+    type => "final",
+    text => "$path1 combined with $path2",
+    with => 1,
+  }],
+  input_to_symbol => [ map { $sm->s2n($_) } @input_to_symbol ],
+};
+
+#####################################################################
+# Copy the vertex data.
+#####################################################################
+$d3->{vertices}[$vm->s2n(pair(0, $_))] = 
+  $d1->{vertices}[$_] for 1 .. @{ $d1->{vertices} } - 1;
+
+$d3->{vertices}[$vm->s2n(pair($_, 0))] = 
+  $d2->{vertices}[$_] for 1 .. @{ $d2->{vertices} } - 1;
+
+#####################################################################
+# Making sure cross-references among vertices are updated.
+#####################################################################
+for (my $ix = 3; defined $vm->n2s($ix); ++$ix) {
+  my ($v1, $v2) = unpair($vm->n2s($ix));
+  my $v = !$v1 ? $v2 : $v1;
+  my $d =  $v1 ? $d2 : $d1;
+  my $s =  $v1 ? sub { $vm->s2n(pair($_[0], 0)) } :
+                 sub { $vm->s2n(pair(0, $_[0])) };
+  for my $k (qw/with operand1 operand2 stack_vertex/) {
+    $d3->{vertices}[$ix]{$k} = $s->($d->{vertices}[$v]{$k} || 0);
+  }
+}
+
+#####################################################################
+# Copy the edge data.
+#####################################################################
+for (my $ix = 1; defined $bm->n2s($ix); ++$ix) {
+  my ($s1, $s2) = unpair($bm->n2s($ix));
+  for my $k (qw/char_edges null_edges/) {
+    push @{ $d3->{$k}[$ix] },
+      map { [map { $vm->s2n(pair(0, $_)) } @$_ ] }
+        @{ $d1->{$k}[$s1] };
+    push @{ $d3->{$k}[$ix] },
+      map { [map { $vm->s2n(pair($_, 0)) } @$_ ] }
+        @{ $d2->{$k}[$s2] };
+  }
+}
+
+#####################################################################
+# Connect the old `start_vertex` and `final_vertex` vertices to the
+# new ones. If one of the input data files represents a recursive
+# grammar, this should also add appropriate `if` and `fi` vertices
+# and their operands to allow the higher-level parser to complete the
+# combination. This also ignores edge cases where the `start` or the
+# `final` vertex in one of the input automata occurs only as part of
+# a `char_edge`. But for demonstration purposes this should be okay.
+#####################################################################
+for (my $ix = 1; $ix < @{ $d3->{null_edges} }; ++$ix) {
+  next unless defined $d3->{null_edges}[$ix];
+  my @edges = @{ $d3->{null_edges}[$ix] };
+  my @vertices = map { @$_ } @edges;
+  my %has = map { $_ => 1 } @vertices;
+  my $s1 = $vm->s2n(pair(0, $d1->{start_vertex}));
+  my $f1 = $vm->s2n(pair(0, $d1->{final_vertex}));
+  my $s2 = $vm->s2n(pair($d1->{start_vertex}, 0));
+  my $f2 = $vm->s2n(pair($d1->{final_vertex}, 0));
+  push @{ $d3->{null_edges}[$ix] }, [ $d3->{start_vertex}, $s1 ]
+    if $has{$s1};
+  push @{ $d3->{null_edges}[$ix] }, [ $d3->{start_vertex}, $s2 ]
+    if $has{$s2};
+  push @{ $d3->{null_edges}[$ix] }, [ $f1, $d3->{final_vertex} ]
+    if $has{$f1};
+  push @{ $d3->{null_edges}[$ix] }, [ $f2, $d3->{final_vertex} ]
+    if $has{$f2};
+}
+
+$d3->{char_edges}[0] = [];
+$d3->{null_edges}[0] = [];
+
+#####################################################################
+# Now we can print out the result. It will be rather large since, for
+# one thing, the worst case size of the product automata is O(N*M),
+# and we made no effort to remove data that has become useless such
+# as states that cannot reach an accepting state.
+#####################################################################
+my $json = JSON->new->canonical->ascii->encode($d3);
+
+gzip \$json => \(my $gzipped);
+
+binmode STDOUT;
+print $gzipped;
+```
+
+Usage:
+
+```
+% perl not-a-but-b.pl rfc3986.URI.json.gz rfc2396.URI.json.gz > x.gz
+% perl random-samples.pl x.gz
+```
+
+Output:
+
+```
+GA.://!:%3A2++%6A./#
+VA25536://:%A6#!$:?!
+V://%5A:;@-%0A%AAA@%2A6?
+G://%A6_+@!+%A5:%16./;?
+AA+.VG+3+5A5V://:!%A5?
+A://:%60/;2;!/;@;;V
+A.V://@@;%1A@
+AAAAA63A.5--://G:;%6A1;++
+```
+
+The strings above are strings that are URIs according to RFC 2396 but
+not according to the later specification RFC 3986. We can also do it
+the other way around, the following are strings that RFC 3986 accepts
+but RFC 2396 did not:
+
+```
+V+://@[VAA.::]:/!/?///%A1/1!#@:
+GGA.A3A-6:
+G-:#-/?
+G+G:
+G+1:
+GG:#@/+_
+A-://[V3.:::+]/#
+AA05AG:#/;
+```
+
+How to generate these random samples is explained in a later section.
+It is easy to generate a small set of test cases for all interesting
+differences between the two specifications covered, as explained in
+the section on test suite coverage.
 
 ## Sample applications
 
