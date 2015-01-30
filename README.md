@@ -1064,118 +1064,6 @@ And that is just the point. Compilers ought to figure out how to
 analyse formal languages efficiently, rather than bothering humans
 with it.
 
-## Limitations
-
-The basic approach outlined above works well for carefully constructed
-data format and protocol message formats that are relatively regular,
-unambiguous, and deterministic, which is the case for a large set of
-standard formats. The samples include parsing data for URIs, JSON,
-XML, and ABNF. All the corresponding grammars are ambiguous and only
-URIs are regular, so these are not strict requirements.
-
-The design of the data files also allows the deterministic finite
-state transducers used for pre-processing the input to simply record
-the input without making decisions on their own, in which case the
-higher level parser would turn into an unaided non-deterministic
-pushdown transducer. That is a worst-case escape hatch that ensures
-the integrity of the parsing data files while avoiding the creation
-of an exponential number of states, so **it is always possible to create
-a correct and reasonably sized data file**, but naively written higher
-level parsers are likely to perform poorly within this system.
-
-There are ways to delay the inevitable however. A simple example are
-XML document type definition files. The finite state transducers can
-handle the format fine except for one construct:
-
-```
-ignoreSect         ::= '<![' S? 'IGNORE' S? '[' ignoreSectContents* ']]>'
-ignoreSectContents ::= Ignore ('<![' ignoreSectContents ']]>' Ignore)*
-Ignore             ::= Char* - (Char* ('<![' | ']]>') Char*) 
-```
-
-In the grammar for XML, `Char` is the whole alphabet, and the rule
-`ignoreSectContents` matches anything so long as any `<![` properly
-nests with a closing `]]>`. Since the finite transducers cannot
-detect the outermost closing `]]>`, this simply matches anything; in
-order to still make all regular decisions for the higher level parser,
-an inordinate amount of states is needed. Of course, for any finite
-number of nesting levels, relatively few states are needed, delaying
-any fallback to the worst case as much as is convenient by expanding
-problematic recursions a couple of times.
-
-An example of this is included in the repository. Using
-
-```
-% node demo-parselov.js xml4e.extSubset.json.gz ex.dtd
-```
-
-Right after reading the first `<![IGNORE[` in a location where the
-construct is allowed, the first finite state transducer switches to
-a worst-case mode of operation and simply records the input. The
-second transducer accordingly generates all possible edges for every
-position in the input, leaving an inordinate amount of work for the
-naively written higher level demo parser introduced earlier. The
-`dot` output is nevertheless correct. For an input like
-
-```xml
-<!ELEMENT a (b, (c | d)*, e*)>
-```
-
-The output would be
-
-```js
-["extSubset", [
-  ["extSubsetDecl", [
-    ["markupdecl", [
-      ["elementdecl", [
-        ["S", [], 9, 10],
-        ["Name", [
-          ["Letter", [
-            ["BaseChar", [], 10, 11]], 10, 11]], 10, 11],
-        ["S", [], 11, 12],
-        ["contentspec", [
-          ["children", [
-            ["seq", [
-                ["cp", [
-                  ["Name", [
-                    ["Letter", [
-                      ["BaseChar", [], 13, 14]], 13, 14]], 13, 14]],
-                        13, 14],
-              ["S", [], 15, 16],
-                ["cp", [
-                    ["choice", [
-                        ["cp", [
-                          ["Name", [
-                            ["Letter", [
-                              ["BaseChar", [], 17, 18]], 17, 18]],
-                                17, 18]], 17, 18],
-                      ["S", [], 18, 19],
-                      ["S", [], 20, 21],
-                        ["cp", [
-                          ["Name", [
-                            ["Letter", [
-                              ["BaseChar", [], 21, 22]], 21, 22]],
-                                21, 22]], 21, 22]], 16, 23]], 16, 24],
-              ["S", [], 25, 26],
-                ["cp", [
-                  ["Name", [
-                    ["Letter", [
-                      ["BaseChar", [], 26, 27]], 26, 27]], 26, 27]],
-                        26, 28]], 12, 29]], 12, 29]], 12, 29]], 0,
-                          30]], 0, 30],
-    ["DeclSep", [
-      ["S", [], 30, 31]], 30, 31]], 0, 31]], 0, 31]  
-```
-
-It would also be possible to extend the basic formalism along the
-hiearchy of languages with additional features so such cases can be
-handled by lower level parsers. For the particular example above, a
-counter and transitions depending on whether the counter is zero is
-needed. With a stack and transitions depending on the top symbol, we
-would have classic deterministic pushdown transducers. Similarily,
-there could be a finite number of stacks in parallel used in this
-manner. Beyond that there is probably no point in further extensions.
-
 ## Combination of data files and parallel simulation
 
 The design of the core system makes it easy to simulate multiple
@@ -1515,6 +1403,118 @@ How to generate these random samples is explained in a later section.
 It is easy to generate a small set of test cases for all interesting
 differences between the two specifications covered, as explained in
 the section on test suite coverage.
+
+## Limitations
+
+The basic approach outlined above works well for carefully constructed
+data format and protocol message formats that are relatively regular,
+unambiguous, and deterministic, which is the case for a large set of
+standard formats. The samples include parsing data for URIs, JSON,
+XML, and ABNF. All the corresponding grammars are ambiguous and only
+URIs are regular, so these are not strict requirements.
+
+The design of the data files also allows the deterministic finite
+state transducers used for pre-processing the input to simply record
+the input without making decisions on their own, in which case the
+higher level parser would turn into an unaided non-deterministic
+pushdown transducer. That is a worst-case escape hatch that ensures
+the integrity of the parsing data files while avoiding the creation
+of an exponential number of states, so **it is always possible to create
+a correct and reasonably sized data file**, but naively written higher
+level parsers are likely to perform poorly within this system.
+
+There are ways to delay the inevitable however. A simple example are
+XML document type definition files. The finite state transducers can
+handle the format fine except for one construct:
+
+```
+ignoreSect         ::= '<![' S? 'IGNORE' S? '[' ignoreSectContents* ']]>'
+ignoreSectContents ::= Ignore ('<![' ignoreSectContents ']]>' Ignore)*
+Ignore             ::= Char* - (Char* ('<![' | ']]>') Char*) 
+```
+
+In the grammar for XML, `Char` is the whole alphabet, and the rule
+`ignoreSectContents` matches anything so long as any `<![` properly
+nests with a closing `]]>`. Since the finite transducers cannot
+detect the outermost closing `]]>`, this simply matches anything; in
+order to still make all regular decisions for the higher level parser,
+an inordinate amount of states is needed. Of course, for any finite
+number of nesting levels, relatively few states are needed, delaying
+any fallback to the worst case as much as is convenient by expanding
+problematic recursions a couple of times.
+
+An example of this is included in the repository. Using
+
+```
+% node demo-parselov.js xml4e.extSubset.json.gz ex.dtd
+```
+
+Right after reading the first `<![IGNORE[` in a location where the
+construct is allowed, the first finite state transducer switches to
+a worst-case mode of operation and simply records the input. The
+second transducer accordingly generates all possible edges for every
+position in the input, leaving an inordinate amount of work for the
+naively written higher level demo parser introduced earlier. The
+`dot` output is nevertheless correct. For an input like
+
+```xml
+<!ELEMENT a (b, (c | d)*, e*)>
+```
+
+The output would be
+
+```js
+["extSubset", [
+  ["extSubsetDecl", [
+    ["markupdecl", [
+      ["elementdecl", [
+        ["S", [], 9, 10],
+        ["Name", [
+          ["Letter", [
+            ["BaseChar", [], 10, 11]], 10, 11]], 10, 11],
+        ["S", [], 11, 12],
+        ["contentspec", [
+          ["children", [
+            ["seq", [
+                ["cp", [
+                  ["Name", [
+                    ["Letter", [
+                      ["BaseChar", [], 13, 14]], 13, 14]], 13, 14]],
+                        13, 14],
+              ["S", [], 15, 16],
+                ["cp", [
+                    ["choice", [
+                        ["cp", [
+                          ["Name", [
+                            ["Letter", [
+                              ["BaseChar", [], 17, 18]], 17, 18]],
+                                17, 18]], 17, 18],
+                      ["S", [], 18, 19],
+                      ["S", [], 20, 21],
+                        ["cp", [
+                          ["Name", [
+                            ["Letter", [
+                              ["BaseChar", [], 21, 22]], 21, 22]],
+                                21, 22]], 21, 22]], 16, 23]], 16, 24],
+              ["S", [], 25, 26],
+                ["cp", [
+                  ["Name", [
+                    ["Letter", [
+                      ["BaseChar", [], 26, 27]], 26, 27]], 26, 27]],
+                        26, 28]], 12, 29]], 12, 29]], 12, 29]], 0,
+                          30]], 0, 30],
+    ["DeclSep", [
+      ["S", [], 30, 31]], 30, 31]], 0, 31]], 0, 31]  
+```
+
+It would also be possible to extend the basic formalism along the
+hiearchy of languages with additional features so such cases can be
+handled by lower level parsers. For the particular example above, a
+counter and transitions depending on whether the counter is zero is
+needed. With a stack and transitions depending on the top symbol, we
+would have classic deterministic pushdown transducers. Similarily,
+there could be a finite number of stacks in parallel used in this
+manner. Beyond that there is probably no point in further extensions.
 
 ## Sample applications
 
