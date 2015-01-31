@@ -1110,6 +1110,13 @@ a cheap option would be to use a graph for the rare case of encounters
 with this obscure part of the XML format, and switch to using a stack
 once the actual document content is read.
 
+Now, if you recall that since `choice` and `seq` in the example above
+start at the same position, their `start` vertices will also occur in
+the same `backwards` state (which corresponds directly to `null_edges`
+and `char_edges`), and treating them as the same vertex can therefore
+be accomplished by linking `backwards` states together instead of the
+individual vertices. More on this later.
+
 The JSON grammar in RFC 4627 is more complicated. It makes liberal
 use of the `ws` production to indicate where ignorable white space
 characters, such as spaces and newlines between values, can be placed.
@@ -1126,6 +1133,152 @@ is made is adding a simple disambiguation strategy, for instance, we
 could simply ignore the option to "continue reading" and enter the
 recursive symbol as soon as possible. That would change the language,
 and it has to be done carefully.
+
+Let's put some of this into code:
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use List::Util qw/all/;
+use List::MoreUtils qw/uniq/;
+use List::UtilsBy qw/partition_by sort_by nsort_by/;
+use Graph::SomeUtils ':all';
+use IO::Uncompress::Gunzip qw/gunzip/;
+
+local $Storable::canonical = 1;
+
+my ($path, $file) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+sub map_edge {
+  my ($edge) = @_;
+  return [ map { $d->{vertices}[$_]{stack_vertex} } @$edge ];
+}
+
+for (my $ax = 0; $ax < @{ $d->{null_edges} }; ++$ax) {
+  my $edge = $ax;
+  
+  my $null = Graph::Directed->new;
+  my $char = Graph::Directed->new;
+  
+  $null->add_edges(map { map_edge($_) } @{$d->{null_edges}[$edge]});
+  $char->add_edges(map { map_edge($_) } @{$d->{char_edges}[$edge]});
+
+  ###################################################################
+  # This removes loops from unlabeled vertices and unlabeled vertices
+  # between labeled vertices. The sole purpose of unlabeled vertices
+  # is to ensure that we can always properly go from one set of edges
+  # to another. Ordinarily they represent terminals in the grammar,
+  # but here they also represent non-recursive symbols. Loops are due
+  # to merging `start` and `final` vertices e.g. because non-terminal
+  # symbols match the empty string. In any case, they do not affect
+  # how we ultimately pair vertices that repesent recursions.
+  ###################################################################
+  for my $v ($null->vertices) {
+    next if length ($d->{vertices}[$v]{type} // '');
+    $null->delete_edge($v, $v);
+    next if $char->successors($v);
+    next unless $null->predecessors($v);
+    next unless $null->successors($v);
+    for my $p ($null->predecessors($v)) {
+      for my $s ($null->successors($v)) {
+        $null->add_edge($p, $s);
+      }
+    }
+    graph_delete_vertex_fast($null, $v);
+  }
+  
+  for my $v ($null->vertices, $char->vertices) {
+    #################################################################
+    # If a vertex has multiple successors in `$char`, we would leave
+    # this set of edges on more than a single vertex, which would
+    # violate our constraints. Similarily, if there is a choice be-
+    # tween moving on to the next set of edges (next character) and
+    # staying here, that would violate our constraints. Hence this:
+    #################################################################
+    my @s;
+    push @s, $null->successors($v);
+    push @s, $char->successors($v);
+    next if @s <= 1;
+    
+    #################################################################
+    # The following tests do not allow successors in `$char` but do
+    # allow multiple successors in `$null` provided that all of them
+    # are either `final` vertices (in which case we can choose among
+    # them by looking at the last-in value) or `start` vertices (in
+    # which case we just have to `push` them together, side-by-side.
+    #################################################################
+    my $all_final = all {
+      ($d->{vertices}[$_]{type} // '') eq 'final'
+    } $null->successors($v);
+    
+    my $all_start = all {
+      ($d->{vertices}[$_]{type} // '') eq 'start'
+    } $null->successors($v);
+    
+    #################################################################
+    # The check `and not $char->successors($v)` ensures that there is
+    # no choice between going into a recursive symbol, or moving out
+    # of it, and moving on to the next character.
+    #################################################################
+    if (($all_final or $all_start) and not $char->successors($v)) {
+      next;
+    }
+
+    #################################################################
+    # If we get here, there is a problem with the grammar that might
+    # make it impossible to link the `start` and `final` points of
+    # recursive symbols in a match together using only a stack. There
+    # is one case where that may still be possible (right recursion),
+    # but we are ignoring that for now. This will print debugging in-
+    # formation if there is a violation, otherwise this script will
+    # not print anything at all.
+    #################################################################
+    say join "\t",
+     "succ",
+     $v,
+     "null",
+     (map {
+       $_, $d->{vertices}[$_]{type}, $d->{vertices}[$_]{text}
+      } (sort $null->successors($v))),
+     "char", (sort $char->successors($v));
+  }
+}
+
+```
+
+This script checks for the conditions explained above. For the URI,
+ABNF, XML `document`, and XML `element` samples it prints nothing,
+for the RFC 4627 JSON sample it will print something like:
+
+```
+succ    356     null    11      start   value   char    356
+succ    357     null    200     start   value   char    357
+succ    357     null    367                     char    357
+succ    363     null    46      final   object  char    363
+succ    366     null    28      final   object  char    366
+succ    367     null    175     final   array   char    367
+succ    375     null    23      start   value   char    375
+succ    382     null    87      final   array   char    382
+succ    386     null    42      start   value   char    386
+succ    389     null    106     start   value   char    389
+succ    393     null    363                     char    393
+succ    394     null    125     start   value   char    394
+succ    394     null    382                     char    394
+succ    395     null    366                     char    395
+```
+
+This is a crude way of telling you that at some point you can go from
+`stack_vertex` `356` to vertex `11` without reading anything (`null`)
+or to vertex `356` after reading an input symbol (`char`). In other
+words, the grammar might be ambiguous, and it is probably not possible
+to parse using only a single stack while reporting all possible matches.
+This also attempts to tell you where the problem might lie.
 
 ## Combination of data files and parallel simulation
 
