@@ -1064,6 +1064,69 @@ And that is just the point. Compilers ought to figure out how to
 analyse formal languages efficiently, rather than bothering humans
 with it.
 
+## When a stack is good enough
+
+With the approach shown above it would be nice if we could use a
+simpler data structure than a graph, namely a stack. Some languages
+are simple enough that a stack is sufficient. When the vertices in
+all `null_edges` and all `char_edges` are projected to `stack_vertex`
+and loops around unlabeled vertices are removed, and the result is
+that all vertices in each edge have at most one successor, or if all
+successors are `final` vertices (we can choose among them using the
+last-in value) then there is at most one possible path we can take.
+
+The above is the case for non-recursive languages like the RFC 3986
+grammar (URIs), and also recursive grammars like the RFC 5234 (ABNF)
+and XML `element` grammars. When parsing RFC 5234 documents, the
+stack would be a path through a graph like this:
+
+![Simplified stack graph for ABNF](./rfc5234-stack.png?raw=true)
+
+The choice in the graph is not visible to the algorithm above since
+`option` starts with `[` and `group` starts with `(` and so the two
+options do not appear together in the same `backwards` state. A case
+where we get a negative answer for the analysis above is the whole
+XML `document` production. A problem there are element content
+models (which can occur in the internal subset of document type
+declarations):
+
+```
+children ::= (choice | seq) ('?' | '*' | '+')?
+cp       ::= (Name | choice | seq) ('?' | '*' | '+')?
+choice   ::= '(' S? cp ( S? '|' S? cp )+ S? ')'
+seq      ::= '(' S? cp ( S? ',' S? cp )* S? ')'
+```
+
+Since `choice` and `seq` are both recursive, and cannot be told apart
+except by whether `,` or `|` is used to separate their children, both
+options would have to be put on the stack together, which violates
+the rule given above (one vertex has multiple successors that are not
+all `final` vertices). Still, if, for instance, they are also always
+closed together with no alternative than closing them, we could treat
+them as essentially the same vertex. Same if closing one of them is
+the only alternative, which would force a `pop`. It is also worth to
+note that for the `element` production the problem does not exist, so
+a cheap option would be to use a graph for the rare case of encounters
+with this obscure part of the XML format, and switch to using a stack
+once the actual document content is read.
+
+The JSON grammar in RFC 4627 is more complicated. It makes liberal
+use of the `ws` production to indicate where ignorable white space
+characters, such as spaces and newlines between values, can be placed.
+This results in an ambiguity as to where recursive productions begin
+with respect to an input tring. So an analysis of the graph produced
+as part of the algorithm explained at the beginning of the section
+shows that at some points there is a choice between reading more
+input and starting to match productions like `value`. 
+
+If we actually want to report all possible matches, which includes
+encoding all the "continue reading or start a `value`" choices, it is
+not possible to do that with a simple stack. A common sacrifice that
+is made is adding a simple disambiguation strategy, for instance, we
+could simply ignore the option to "continue reading" and enter the
+recursive symbol as soon as possible. That would change the language,
+and it has to be done carefully.
+
 ## Combination of data files and parallel simulation
 
 The design of the core system makes it easy to simulate multiple
