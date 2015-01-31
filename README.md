@@ -1280,6 +1280,15 @@ words, the grammar might be ambiguous, and it is probably not possible
 to parse using only a single stack while reporting all possible matches.
 This also attempts to tell you where the problem might lie.
 
+Applied to the XML 1.0 `extSubset` data file, the script generates a
+lot of nonsense. That is because the `forwards` automaton is not 
+"complete", it does not actually trace all possible paths through the
+grammar, and accordingly the `backwards` automaton and hence the
+`char_edges` and the `null_edges` are not complete either. In contrast
+the backtracking higher-level parser would still, very slowly, do the
+right thing when trying to parse. This is explained in more detail in
+the section on "Limitations".
+
 ## Combination of data files and parallel simulation
 
 The design of the core system makes it easy to simulate multiple
