@@ -11,23 +11,25 @@ right recursion, infinite look-ahead, cycles in production rules,
 productions that match the empty string, Unicode, the system is not
 troubled by any of these. Of course, if you need e.g. ambiguities
 resolved, you have to implement that yourself as post-processing step
-(parsers report all possible parse trees in compact form).
+(parsers report all possible parse trees in compact form). There are
+however limits on the overall complexity of the grammar.
 * **No human input is needed**. The system only needs a grammar that
 can typically be copied from data format specifications; programs that
 parse documents can be grammar-agnostic and generic. The system does
 not generate programming language source code files where you have to
 fill in gaps. You also do not have to modify the grammar to accomodate
 ambiguity resolution or other algorithms.
-* **Data-driven parsing**. Grammars are transformed into tabluar data
-encoded in simple JSON documents amenable to machine processing. The
-data files can be shared, re-used, analysed, transformed, compiled,
-combined, and more, in a portable manner.
-* **Linear parsing time and memory use**. Parsing time and memory use
-are O(n) in the size of input documents and independent of the grammar.
-For large input documents it is trivial to make a parser that uses
-O(1) main memory and writes intermediate results to disk. One caveat:
-for recursive grammars, parser output requires post-processing with
-possibly non-linear complexity for some applications.
+* **Language-independent, data-driven parsing**. Grammars are transformed
+into tabluar data encoded in simple JSON documents amenable to machine
+processing. The data files can be shared, re-used, analysed, transformed,
+compiled, combined, and more, in a portable manner.
+* **Linear parsing time and memory use**. For the low level parser,
+parsing time and memory use are O(n) in the size of input documents
+and independent of the grammar. For large input documents it is trivial
+to make a parser that uses O(1) main memory and writes intermediate
+results to disk. One caveat: for recursive grammars, parser output
+requires post-processing with possibly non-linear complexity for some
+applications.
 * **Credible performance**. It's not just linear, the constants are very
 small aswell. An optimised parser will do nothing but simple arithmetic,
 table lookups, and memory writes to store results, and should not do
@@ -52,7 +54,28 @@ two passes over an input document and then describes all possible parse
 trees as a series of edge sets of a larger parse graph. The following
 example illustrates this.
 
-## Grammar-agnostic example parser
+## Table of Contents
+
+- [Grammar-agnostic low-level parser](#)
+  - [Running the demo script](#)
+- [Higher-level parser](#)
+- [Merging regular paths](#)
+- [Pairing recursions in parallel](#)
+- [Towards a compiler](#)
+- [When a stack is good enough](#)
+- [Combination of data files and parallel simulation](#)
+- [Limitations](#)
+- [Sample applications](#)
+  - [Prefixing rulenames in ABNF grammars](#)
+  - [Analysing data format test suites for completeness](#)
+  - [Generating random documents](#)
+  - [Syntax highlighting](#)
+  - [Syntax auto-completion](#)
+  - [Extracting ABNF grammar rules from RFCs](#)
+  - [Converting grammars to regular expressions](#)
+- [License](#)
+
+## Grammar-agnostic low-level parser
 
 The following code is a complete and runnable NodeJS application that
 reads a generated parsing data file, as they are included in this
