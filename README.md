@@ -62,6 +62,8 @@ example illustrates this.
 - [Merging regular paths](#merging-regular-paths)
 - [Pairing recursions in parallel](#pairing-recursions-in-parallel)
 - [Combination of data files and parallel simulation](#combination-of-data-files-and-parallel-simulation)
+- [Handling grammars based on tokens](#handling-grammars-based-on-tokens)
+- [Handling data structures other than strings](#handling-data-structures-other-than-strings)
 - [Limitations](#limitations)
 - [Sample applications](#sample-applications)
   - [Prefixing rulenames in ABNF grammars](#prefixing-rulenames-in-abnf-grammars)
