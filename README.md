@@ -1122,21 +1122,9 @@ Since `choice` and `seq` are both recursive, and cannot be told apart
 except by whether `,` or `|` is used to separate their children, both
 options would have to be put on the stack together, which violates
 the rule given above (one vertex has multiple successors that are not
-all `final` vertices). Still, if, for instance, they are also always
-closed together with no alternative than closing them, we could treat
-them as essentially the same vertex. Same if closing one of them is
-the only alternative, which would force a `pop`. It is also worth to
-note that for the `element` production the problem does not exist, so
-a cheap option would be to use a graph for the rare case of encounters
-with this obscure part of the XML format, and switch to using a stack
-once the actual document content is read.
-
-Now, if you recall that since `choice` and `seq` in the example above
-start at the same position, their `start` vertices will also occur in
-the same `backwards` state (which corresponds directly to `null_edges`
-and `char_edges`), and treating them as the same vertex can therefore
-be accomplished by linking `backwards` states together instead of the
-individual vertices. More on this later.
+all `final` vertices). A cheap option would be to use a graph for the
+rare case of encounters with this obscure part of the XML format, and
+switch to using a stack once the actual document content is read.
 
 The JSON grammar in RFC 4627 is more complicated. It makes liberal
 use of the `ws` production to indicate where ignorable white space
@@ -1178,6 +1166,7 @@ my $d = YAML::XS::Load($data);
 
 sub map_edge {
   my ($edge) = @_;
+  return $edge;
   return [ map { $d->{vertices}[$_]{stack_vertex} } @$edge ];
 }
 
@@ -1231,36 +1220,32 @@ for (my $ax = 0; $ax < @{ $d->{null_edges} }; ++$ax) {
     # The following tests do not allow successors in `$char` but do
     # allow multiple successors in `$null` provided that all of them
     # are either `final` vertices (in which case we can choose among
-    # them by looking at the last-in value) or `start` vertices (in
-    # which case we just have to `push` them together, side-by-side.
+    # them by looking at the last-in value) or `start` vertices.
     #################################################################
     my $all_final = all {
       ($d->{vertices}[$_]{type} // '') eq 'final'
     } $null->successors($v);
     
-    my $all_start = all {
-      ($d->{vertices}[$_]{type} // '') eq 'start'
-    } $null->successors($v);
+    my @out = uniq map { $_->[1] } $char->edges;
     
     #################################################################
     # The check `and not $char->successors($v)` ensures that there is
     # no choice between going into a recursive symbol, or moving out
     # of it, and moving on to the next character.
     #################################################################
-    if (($all_final or $all_start) and not $char->successors($v)) {
+    if ($all_final and not $char->successors($v)) {
       next;
     }
 
     #################################################################
     # If we get here, there is a problem with the grammar that might
     # make it impossible to link the `start` and `final` points of
-    # recursive symbols in a match together using only a stack. There
-    # is one case where that may still be possible (right recursion),
-    # but we are ignoring that for now. This will print debugging in-
-    # formation if there is a violation, otherwise this script will
-    # not print anything at all.
+    # recursive symbols in a match together using only a stack. This
+    # will print debugging in formation if there is a violation,
+    # otherwise this script will not print anything at all.
     #################################################################
     say join "\t",
+     scalar(@out),
      "succ",
      $v,
      "null",
@@ -1270,28 +1255,33 @@ for (my $ax = 0; $ax < @{ $d->{null_edges} }; ++$ax) {
      "char", (sort $char->successors($v));
   }
 }
-
 ```
 
 This script checks for the conditions explained above. For the URI,
-ABNF, XML `document`, and XML `element` samples it prints nothing,
-for the RFC 4627 JSON sample it will print something like:
+ABNF, and XML `element` samples it prints nothing, for the RFC 4627
+JSON sample it will print something like:
 
 ```
-succ    356     null    11      start   value   char    356
-succ    357     null    200     start   value   char    357
-succ    357     null    367                     char    357
-succ    363     null    46      final   object  char    363
-succ    366     null    28      final   object  char    366
-succ    367     null    175     final   array   char    367
-succ    375     null    23      start   value   char    375
-succ    382     null    87      final   array   char    382
-succ    386     null    42      start   value   char    386
-succ    389     null    106     start   value   char    389
-succ    393     null    363                     char    393
-succ    394     null    125     start   value   char    394
-succ    394     null    382                     char    394
-succ    395     null    366                     char    395
+1       succ    349     null    76      final   array   char    349
+1       succ    367     null    209     final   object  char    367
+1       succ    378     null    69      final   object  char    378
+1       succ    382     null    8       start   value   char    382
+1       succ    388     null    151     final   array   char    388
+1       succ    394     null    57      start   value   char    394
+2       succ    349     null    76      final   array   char    349
+2       succ    365     null    40      start   value   char    365
+2       succ    367     null    209     final   object  char    367
+2       succ    368     null    378                     char    368
+2       succ    378     null    69      final   object  char    378
+2       succ    379     null    145     start   value   char    379
+2       succ    381     null    12      start   value   char    381
+2       succ    382     null    349                     char    382
+2       succ    382     null    8       start   value   char    382
+2       succ    388     null    151     final   array   char    388
+2       succ    389     null    122     start   value   char    389
+2       succ    391     null    367                     char    391
+2       succ    394     null    388                     char    394
+2       succ    394     null    57      start   value   char    394
 ```
 
 This is a crude way of telling you that at some point you can go from
@@ -1649,6 +1639,234 @@ How to generate these random samples is explained in a later section.
 It is easy to generate a small set of test cases for all interesting
 differences between the two specifications covered, as explained in
 the section on test suite coverage.
+
+## Handling grammars based on tokens
+
+Some specifications separate the language definition into multiple
+parts, one for small units like `number` and `identifier`, called
+tokens, and then separately define how to combine tokens into larger
+structures. An example is the specification for style sheets, [CSS 2.1]
+(http://www.w3.org/TR/2011/REC-CSS2-20110607/syndata.html#syntax).
+We can do the same and define two grammars. Using the ABNF format,
+it could look like this for CSS 2.1, closely mirroring the structure
+of the specification:
+
+```
+CSSTOKEN = IDENT
+  / ATKEYWORD
+  / STRING
+...
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Tokens
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+IDENT         = ident
+ATKEYWORD     = "@" ident
+STRING        = string
+...
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Macros
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ident         = ["-"] nmstart *nmchar
+name          = 1*nmchar
+nmstart       = (ALPHA / "_") / nonascii / escape
+...
+```
+
+The underlying idea is that the sequence of characters that make up a
+style sheet are first turned into a sequence of tokens and the grammar
+above is for one such token. To distinguish tokens from one another,
+the CSS 2.1 specification defines that in trying to find a token, we
+always read as much of the input as possible. The code below is an
+implementation of that:
+
+```perl
+#!perl -w
+use Modern::Perl;
+use Graph::Directed;
+use YAML::XS;
+use IO::Uncompress::Gunzip qw/gunzip/;
+
+local $Storable::canonical = 1;
+
+my ($path, $file) = @ARGV;
+
+gunzip $path => \(my $data);
+
+my $d = YAML::XS::Load($data);
+
+my %state_to_token;
+#####################################################################
+# First we are going to map each `forwards` state to a named token,
+# if any, going through the set of edges at the accepting position.
+#####################################################################
+for (my $ix = 0; $ix < @{ $d->{forwards} }; ++$ix) {
+
+  my $null = Graph::Directed->new;
+  my $edge = $d->{backwards}[1]{transitions}{$ix};
+  next unless defined $edge;
+  
+  die unless $d->{forwards}[$ix]{complete};
+
+  $null->add_edges(@{$d->{null_edges}[$edge]});
+  my %found = map { $d->{vertices}[$_]{text} => 1 } grep {
+    ($d->{vertices}[$_]{type} // '') eq 'final';
+  } $null->predecessors($d->{final_vertex});
+
+  ###################################################################
+  # `DELIM` tokens match "anything else" and the grammar does not
+  # fully distinguish them from other named tokens, so we do it here.
+  ###################################################################
+  if (keys %found > 1) {
+    delete $found{DELIM};
+  }
+
+  ###################################################################
+  # https://lists.w3.org/Archives/Public/www-style/2015Feb/0043.html
+  # This manually resolves an ambiguity in the specification.
+  ###################################################################
+  if ($found{FUNCTION} and $found{'BAD-URI'}) {
+    delete $found{FUNCTION};
+  }
+
+  ###################################################################
+  # We can only proceed if there is no ambiguity left among tokens.
+  ###################################################################
+  die if keys %found != 1;
+  ($state_to_token{$ix}) = keys %found;
+}
+
+open my $f, '<:utf8', $file;
+my $chars = do { local $/; binmode $f; <$f> };
+
+my @vias = map { $d->{input_to_symbol}[ord $_] } split//, $chars;
+
+#####################################################################
+# Now we can turn the sequence of input characters into a sequence of
+# tokens. Since the specification defines to use the "longest match",
+# we simulate the `forwards` automaton until it no longer accepts any
+# input. This assumes that all states that do not reach an accepting
+# state are merged into state `0` as should normally be the case.
+#####################################################################
+for (my $ix = 0; $ix < @vias;) {
+  my $fstate = 1;
+  my $bx = $ix;
+  while ($d->{forwards}[$fstate]{transitions}{$vias[$bx]}) {
+    $fstate = $d->{forwards}[$fstate]{transitions}{$vias[$bx++]};
+    last if $bx >= @vias;
+  }
+  my $token = $state_to_token{$fstate};
+
+  say join "\t", $ix, $bx, $token;
+
+  $ix = $bx;
+}
+```
+
+Usage:
+
+```
+% perl csstoken.pl csstoken.json.gz example.css
+```
+
+Input:
+
+```css
+/* Example */
+body { background: url("example") }
+```
+
+Output (start offset, next offset, name of token):
+
+```
+0       13      COMMENT
+13      15      S
+15      19      IDENT
+19      20      S
+20      21      LEFT-CURLY
+21      22      S
+22      32      IDENT
+32      33      COLON
+33      34      S
+34      48      URI
+48      49      S
+49      50      RIGHT-CURLY
+50      52      S
+```
+
+Next we can make a grammar for the remaining parts of the syntax. As
+the data format still assumes transitions over numbers, we can define
+a number for each token:
+
+```
+IDENT         = %x01
+ATKEYWORD     = %x02
+STRING        = %x03
+...
+stylesheet    = *( CDO / CDC / S / statement )
+statement     = ruleset / at-rule
+at-rule       = ATKEYWORD *S *any ( block / SEMICOLON *S )
+...
+```
+
+One twist of note is that the CSS 2.1 specification defines "COMMENT
+tokens do not occur in the grammar (to keep it readable), but any
+number of these tokens may appear anywhere outside other tokens." So
+when feeding tokens into a parser for the second grammar, we would
+have to skip `COMMENT` tokens (or, alternatively, change the grammar
+so that a `COMMENT` loop appears before and after any reference to a
+rule in the grammar, avoiding redundant instances of such loops). It
+would also be possible to combine the two grammars into one, but we
+would need to make the grammar for the tokens such that they are
+disjoint and each token retains the property that it matches "as much
+as possible".
+
+## Handling data structures other than strings
+
+The graph formalism on which the system presented in this document is
+based essentially linearises hierarchial data structures. Consider, as
+a comparison, event-based parsers for languages like XML. They present
+a stream of events like `start_element` and `end_element` to calling
+applications. Likewise, the system here equates parsing with finding a
+path through a graph where some vertices are labeled `start` and other
+vertices are labeled `final` and a valid path is one where there is a
+matching `final` for every `start` on the path. We can use this idea
+to linearise some data structures so they fit into this system.
+
+Trees, like indeed XML documents, are a good example. A simple use
+case is validation of XML documents. Let's make a simple grammar for
+a subset of the HTML/XHTML language, considering only the nesting and
+position of elements, not their attributes or character data content:
+
+```
+start-html  = %x01
+final-html  = %x02
+start-head  = %x03
+final-head  = %x04
+start-title = %x05
+final-title = %x06
+start-div   = %x07
+final-div   = %x08
+start-p     = %x09
+final-p     = %x0a
+start-body  = %x0b
+final-body  = %x0c
+
+html        = start-html  (head body) final-html
+head        = start-head  (title)     final-head
+title       = start-title ""          final-title
+body        = start-body  *(div / p)  final-body
+div         = start-div   *(div / p)  final-div 
+p           = start-p     ""          final-p
+```
+
+The first part is similar to how we handled tokens in the previous
+section. Essentially, in a manner of speaking, `<html>` is a token,
+and so is `</html>`, and so is any other start tag or end tag. But
+we do not have to derive these tokens from a character string, it
+would also be possible to generate a sequence of them from a tree in
+memory by way of a depth-first traversal. XML schema languages like
+RELAX NG follow a similar principle, although they do offer more
+convenient syntactic sugar to express rules.
 
 ## Limitations
 
