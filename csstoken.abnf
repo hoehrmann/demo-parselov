@@ -1,0 +1,117 @@
+CSSTOKEN = IDENT
+  / ATKEYWORD
+  / STRING
+  / BAD-STRING
+  / BAD-URI
+  / BAD-COMMENT
+  / HASH
+  / NUMBER
+  / PERCENTAGE
+  / DIMENSION
+  / URI
+  / UNICODE-RANGE
+  / CDO
+  / CDC
+  / COLON
+  / SEMICOLON
+  / LEFT-CURLY
+  / RIGHT-CURLY
+  / LEFT-PAREN
+  / RIGHT-PAREN
+  / LEFT-SQUARE
+  / RIGHT-SQUARE
+  / S
+  / COMMENT
+  / FUNCTION
+  / INCLUDES
+  / DASHMATCH
+  / DELIM
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Tokens
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+IDENT         = ident
+ATKEYWORD     = "@" ident
+STRING        = string
+BAD-STRING    = badstring
+BAD-URI       = baduri
+BAD-COMMENT   = badcomment
+HASH          = "#" name
+NUMBER        = num
+PERCENTAGE    = num "%"
+DIMENSION     = num ident
+URI           = "url(" w string w ")"
+              / "url(" w *("!" / "#" / "$" / "%" / "&" / %x2a-5b
+                / %x5d-7e / nonascii / escape) w ")"
+
+UNICODE-RANGE = "u+" 1*6(HEXDIG / "?") [ "-" 1*6HEXDIG ]
+CDO           = "<!--"
+CDC           = "-->"
+
+COLON         = ":"
+SEMICOLON     = ";"
+LEFT-CURLY    = "{"
+RIGHT-CURLY   = "}"
+LEFT-PAREN    = "("
+RIGHT-PAREN   = ")"
+LEFT-SQUARE   = "["
+RIGHT-SQUARE  = "]"
+
+S             = 1*(%x09 / %x0a / %x0d / %x0c / %x20)
+COMMENT       = "/*"
+  *(%x00-29 / %x2b-10ffff) 1*"*"
+  *((%x00-29 / %x2b-2e / %x30-10ffff) *(%x00-29 / %x2b-10ffff) 1*"*")
+  "/"
+
+FUNCTION      = ident "("
+INCLUDES      = "~="
+DASHMATCH     = "|="
+DELIM         = %x00-08 / %x0b-0b / %x0e-1f / %x21-21 / %x23-26
+              / %x2a-39 / %x3c-5a / %x5c-5c / %x5e-7a / %x7c-7c
+              / %x7e-10ffff
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Macros
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ident         = ["-"] nmstart *nmchar
+name          = 1*nmchar
+nmstart       = (ALPHA / "_") / nonascii / escape
+nonascii      = %x80-10ffff
+unicode       = "\" 1*6HEXDIG [CRLF / (%x20 / %x0a / %x0d / %x09
+                  / %x0c)]
+
+escape        = unicode / "\" (%x00-09 / %x0b / %x0e-2f / %x3a-40
+                  / %x47-60 / %x67-10ffff)
+
+nmchar        = (ALPHA / DIGIT / "_" / "-") / nonascii / escape
+num           = 1*DIGIT / (*DIGIT "." 1*DIGIT)
+string        = string1 / string2
+string1       = %x22 *(%x00-09 / %x0b / %x0e-21 / %x23-5b
+                  / %x5d-10ffff / nl / escape) %x22
+
+string2       = %x27 *(%x00-09 / %x0b / %x0e-26 / %x28-5b
+                  / %x5d-10ffff / nl / escape) %x27
+
+badstring     = badstring1 / badstring2
+badstring1    = %x22 *(%x00-09 / %x0b / %x0e-21 / %x23-5b
+                  / %x5d-10ffff / nl / escape) ["\"]
+
+badstring2    = %x27 *(%x00-09 / %x0b / %x0e-26 / %x28-5b
+                  / %x5d-10ffff / nl / escape) ["\"]
+
+badcomment    = badcomment1 / badcomment2 
+badcomment1   = "/*"
+  *(%x00-29 / %x2b-10ffff) 1*"*"
+  *((%x00-29 / %x2b-2e / %x30-10ffff) *(%x00-29 / %x2b-10ffff) 1*"*")
+
+badcomment2   = "/*"
+  *(%x00-29 / %x2b-10ffff)
+  *(1*"*" (%x00-29 / %x2b-2e / %x30-10ffff) *(%x00-29 / %x2b-10ffff))
+
+baduri        = baduri1 / baduri2 / baduri3
+baduri1       = "url(" w *("!" / "#" / "$" / "%" / "&" / %x2a-7e) w
+baduri2       = "url(" w string w
+baduri3       = "url(" w badstring
+
+nl            = %x0a / %x0d %x0a / %x0d / %x0c
+w             = *(%x09 / %x0a / %x0d / %x0c / %x20)
