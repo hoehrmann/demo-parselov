@@ -1287,8 +1287,8 @@ JSON sample it will print something like:
 ```
 
 This is a crude way of telling you that at some point you can go from
-`stack_vertex` `356` to vertex `11` without reading anything (`null`)
-or to vertex `356` after reading an input symbol (`char`). In other
+`stack_vertex` `349` to vertex `76` without reading anything (`null`)
+or to vertex `349` after reading an input symbol (`char`). In other
 words, the grammar might be ambiguous, and it is probably not possible
 to parse using only a single stack while reporting all possible matches.
 This also attempts to tell you where the problem might lie.
